@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SLAM — People Tech Automation (Live)</title>
+<style>
+  :root{
+    --ink:#0D0D0D;
+    --ink-2:#181818;
+    --paper:#FAFAFA;
+    --pink:#FF2D78;
+    --purple:#9B8AFB;
+    --silver:#C9C9C9;
+    --down:#FF4444;
+    --line: rgba(250,250,250,0.12);
+    --mono: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--ink); color:var(--paper); font-family:-apple-system,'Helvetica Neue',Arial,sans-serif; min-height:100%;}
+  body{padding-bottom:80px;}
+  ::selection{background:var(--pink); color:var(--ink);}
+
+  header.hero{padding:56px 24px 40px; border-bottom:1px solid var(--line); position:relative; overflow:hidden;}
+  header.hero::before{content:""; position:absolute; top:-40%; right:-10%; width:520px; height:520px; border-radius:50%;
+    background:radial-gradient(circle at 30% 30%, var(--pink), transparent 70%); opacity:0.16; filter:blur(10px);}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:0.18em; text-transform:uppercase; color:var(--pink);
+    display:flex; align-items:center; gap:10px; margin-bottom:18px;}
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--pink); box-shadow:0 0 10px var(--pink); animation:pulse 1.8s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+  h1.slam-logo{font-size:clamp(64px, 14vw, 148px); line-height:0.85; font-weight:900; letter-spacing:-0.03em;
+    text-transform:uppercase; color:var(--paper); position:relative; z-index:1;}
+  h1.slam-logo span{color:var(--pink);}
+  .tagline{max-width:640px; margin-top:22px; font-size:17px; line-height:1.55; color:rgba(250,250,250,0.72);}
+  .tagline b{color:var(--paper); font-weight:600;}
+  .slam-key{margin-top:32px; display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line); border-radius:2px; overflow:hidden; width:fit-content;}
+  .slam-key div{padding:12px 18px; font-family:var(--mono); font-size:12px; letter-spacing:0.05em; border-right:1px solid var(--line); white-space:nowrap;}
+  .slam-key div:last-child{border-right:none;}
+  .slam-key b{color:var(--pink); font-size:14px;}
+
+  .conn-status{margin-top:24px; font-family:var(--mono); font-size:11.5px; color:rgba(250,250,250,0.45); display:flex; align-items:center; gap:8px;}
+  .conn-dot{width:7px;height:7px;border-radius:50%; background:#555;}
+  .conn-dot.up{background:var(--pink); box-shadow:0 0 6px var(--pink);}
+  .conn-dot.down{background:var(--down); box-shadow:0 0 6px var(--down);}
+
+  .section-label{padding:40px 24px 20px; font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
+    color:rgba(250,250,250,0.5); display:flex; align-items:center; gap:14px;}
+  .section-label::after{content:""; flex:1; height:1px; background:var(--line);}
+
+  .stations{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin:0 24px;}
+  .station{background:var(--ink); padding:28px 24px 26px; position:relative; display:flex; flex-direction:column; gap:14px;}
+  .station .num{font-family:var(--mono); font-size:12px; color:rgba(250,250,250,0.4);}
+  .station h3{font-size:26px; font-weight:900; text-transform:uppercase; letter-spacing:-0.01em;}
+  .station p{font-size:14px; line-height:1.5; color:rgba(250,250,250,0.65); min-height:60px;}
+  .station input{
+    background:var(--ink-2); border:1px solid var(--line); color:var(--paper); font-family:var(--mono);
+    font-size:12.5px; padding:9px 10px; border-radius:2px; outline:none;
+  }
+  .station input::placeholder{color:rgba(250,250,250,0.35);}
+  .station input:focus{border-color:var(--pink);}
+  .fire-btn{margin-top:auto; align-self:flex-start; background:transparent; border:1px solid var(--paper); color:var(--paper);
+    font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; padding:11px 18px; cursor:pointer;
+    transition:all .15s ease; border-radius:2px;}
+  .fire-btn:hover{background:var(--pink); border-color:var(--pink); color:var(--ink);}
+  .fire-btn:active{transform:scale(0.97);}
+  .fire-btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .station.starter{border-top:3px solid var(--pink);}
+  .station.mover{border-top:3px solid var(--purple);}
+  .station.leaver{border-top:3px solid var(--silver);}
+
+  .pipeline-wrap{margin:0 24px 40px; border:1px solid var(--line); background:var(--ink-2);}
+  .pipeline-head{padding:16px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;
+    font-family:var(--mono); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(250,250,250,0.6);}
+  .pipeline-head .clear-btn{cursor:pointer; color:rgba(250,250,250,0.4); background:none; border:none; font-family:var(--mono);
+    font-size:11px; text-decoration:underline; text-transform:none; letter-spacing:0;}
+  .pipeline-head .clear-btn:hover{color:var(--paper);}
+  .tickets{padding:18px 20px; display:flex; flex-direction:column; gap:14px; min-height:110px;}
+  .empty-state{font-family:var(--mono); font-size:13px; color:rgba(250,250,250,0.35); display:flex; align-items:center; gap:10px; padding:20px 0;}
+
+  .ticket{border:1px solid var(--line); background:var(--ink); padding:16px 18px;}
+  .ticket-top{display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:12px; flex-wrap:wrap;}
+  .ticket-title{font-family:var(--mono); font-size:13px; letter-spacing:0.04em;}
+  .ticket-title b{color:var(--paper);}
+  .ticket-name{color:rgba(250,250,250,0.55); font-family:var(--mono); font-size:12px;}
+  .ticket-time{font-family:var(--mono); font-size:11px; color:rgba(250,250,250,0.4);}
+  .tag{display:inline-block; font-family:var(--mono); font-size:10px; letter-spacing:0.08em; text-transform:uppercase;
+    padding:2px 8px; border-radius:2px; border:1px solid currentColor;}
+  .tag.starter{color:var(--pink);}
+  .tag.mover{color:var(--purple);}
+  .tag.leaver{color:var(--silver);}
+
+  .steps{display:flex; flex-wrap:wrap; gap:8px;}
+  .step{display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11.5px; padding:7px 10px;
+    border:1px solid var(--line); border-radius:2px; color:rgba(250,250,250,0.35); transition:all .2s ease;}
+  .step .box{width:12px;height:12px;border:1px solid currentColor; flex-shrink:0; position:relative;}
+  .step.done{color:var(--paper); border-color:rgba(255,45,120,0.4); background:rgba(255,45,120,0.06);}
+  .step.done .box{background:var(--pink); border-color:var(--pink);}
+  .step.done .box::after{content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; color:var(--ink); font-weight:900;}
+  .step.flag{color:var(--purple); border-color:rgba(155,138,251,0.4); background:rgba(155,138,251,0.08);}
+
+  .ticket-footer{margin-top:12px; padding-top:10px; border-top:1px dashed var(--line); font-family:var(--mono); font-size:11px;
+    color:rgba(250,250,250,0.4); display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px;}
+  .ticket-footer .sot{color:var(--pink);}
+
+  .systems{margin:0 24px 40px;}
+  .sys-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line);}
+  .sys{background:var(--ink); padding:16px; display:flex; flex-direction:column; gap:6px; transition:background .3s ease;}
+  .sys.lit{background:rgba(255,45,120,0.07);}
+  .sys .name{font-weight:700; font-size:14px;}
+  .sys .role{font-family:var(--mono); font-size:10.5px; color:rgba(250,250,250,0.45); text-transform:uppercase; letter-spacing:0.05em;}
+  .sys .led{width:8px;height:8px;border-radius:50%; background:rgba(250,250,250,0.2); margin-bottom:4px; transition:all .3s ease;}
+  .sys.lit .led{background:var(--pink); box-shadow:0 0 8px var(--pink);}
+
+  .note{margin:0 24px; padding:20px; border:1px dashed var(--line); font-size:13px; line-height:1.6; color:rgba(250,250,250,0.55);}
+  .note b{color:var(--paper);}
+  .note code{background:var(--ink-2); padding:1px 6px; border-radius:2px; font-family:var(--mono); font-size:12px;}
+
+  @media (max-width:640px){ .slam-key{width:100%;} .slam-key div{flex:1;} }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="eyebrow"><span class="dot"></span> People Technology — Live Automation</div>
+  <h1 class="slam-logo">SL<span>A</span>M</h1>
+  <p class="tagline">Every shift starts with an order. Every employee journey starts the same way — <b>Starters, Leavers, and Movers</b>: one automated pipeline, backed by a real database and API, keeping Core HR, Access, Payroll, and the single source of truth in sync the moment something changes.</p>
+
+  <div class="slam-key">
+    <div><b>S</b> Starters</div>
+    <div><b>L</b> Leavers</div>
+    <div><b>A</b> And</div>
+    <div><b>M</b> Movers</div>
+  </div>
+
+  <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">connecting to API…</span></div>
+</header>
+
+<div class="section-label">Fire a lifecycle event</div>
+
+<div class="stations">
+  <div class="station starter">
+    <div class="num">01</div>
+    <h3>Starter</h3>
+    <p>A new joiner signs their offer. Core HR record is created and every downstream system provisions automatically.</p>
+    <input type="text" id="nameStarter" placeholder="employee name (optional)">
+    <button class="fire-btn" onclick="fireTicket('starter')">Simulate new starter</button>
+  </div>
+  <div class="station mover">
+    <div class="num">02</div>
+    <h3>Mover</h3>
+    <p>An internal promotion or market transfer. Access, comp banding, and reporting lines update without a ticket to IT.</p>
+    <input type="text" id="nameMover" placeholder="employee name (optional)">
+    <button class="fire-btn" onclick="fireTicket('mover')">Simulate a mover</button>
+  </div>
+  <div class="station leaver">
+    <div class="num">03</div>
+    <h3>Leaver</h3>
+    <p>Last day confirmed. Access is revoked on schedule and data is retained per GDPR — nothing lingers, nothing breaks early.</p>
+    <input type="text" id="nameLeaver" placeholder="employee name (optional)">
+    <button class="fire-btn" onclick="fireTicket('leaver')">Simulate a leaver</button>
+  </div>
+</div>
+
+<div class="section-label">System sync — single source of truth</div>
+<div class="systems"><div class="sys-grid" id="sysGrid"></div></div>
+
+<div class="section-label">Live ticket rail — from the database</div>
+<div class="pipeline-wrap">
+  <div class="pipeline-head">
+    <span id="rail-count">loading…</span>
+    <button class="clear-btn" onclick="clearTickets()">clear rail</button>
+  </div>
+  <div class="tickets" id="ticketRail">
+    <div class="empty-state">— loading events from the API —</div>
+  </div>
+</div>
+
+<div class="note">
+  <b>How this is wired:</b> the buttons above call <code>POST /api/events</code>, which writes a new row into SQLite and starts a background worker that advances each pipeline step. The page polls <code>GET /api/events</code> and <code>GET /api/systems</code> every second to render live state straight from the database — this browser tab and any other tab open to this server see the exact same data.
+</div>
+
+<script>
+const POLL_MS = 900;
+
+function fmtTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+function tagClassFor(type){
+  return {starter:'starter', mover:'mover', leaver:'leaver'}[type] || '';
+}
+
+async function fireTicket(type){
+  const inputId = {starter:'nameStarter', mover:'nameMover', leaver:'nameLeaver'}[type];
+  const name = document.getElementById(inputId).value.trim();
+  const btns = document.querySelectorAll('.fire-btn');
+  btns.forEach(b=>b.disabled = true);
+  try{
+    const res = await fetch('/api/events', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({type, employee_name: name || undefined})
+    });
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:'Unknown error'}));
+      alert('Could not fire event: ' + (err.error || res.status));
+    } else {
+      document.getElementById(inputId).value = '';
+      await refreshEvents();
+    }
+  }catch(e){
+    alert('Could not reach the API. Is the server running?');
+  }finally{
+    btns.forEach(b=>b.disabled = false);
+  }
+}
+
+async function clearTickets(){
+  try{
+    await fetch('/api/events', {method:'DELETE'});
+    await refreshEvents();
+  }catch(e){ /* ignore */ }
+}
+
+function renderSystems(systems){
+  const grid = document.getElementById('sysGrid');
+  grid.innerHTML = systems.map(s => `
+    <div class="sys ${s.lit ? 'lit' : ''}">
+      <div class="led"></div>
+      <div class="name">${s.name}</div>
+      <div class="role">${s.role}</div>
+    </div>
+  `).join('');
+}
+
+function renderEvents(events){
+  const rail = document.getElementById('ticketRail');
+  document.getElementById('rail-count').textContent =
+    events.length + ' event' + (events.length===1?'':'s') + ' in the database';
+
+  if(events.length === 0){
+    rail.innerHTML = '<div class="empty-state">— no lifecycle events yet. Fire one above to watch SLAM run —</div>';
+    return;
+  }
+
+  rail.innerHTML = events.map(ev => {
+    const doneCount = ev.steps.filter(s=>s.done).length;
+    const allDone = doneCount === ev.steps.length;
+    return `
+      <div class="ticket">
+        <div class="ticket-top">
+          <div class="ticket-title">
+            <span class="tag ${tagClassFor(ev.type)}">${ev.type}</span>
+            &nbsp; <b>${ev.ticket_id}</b>
+            &nbsp; <span class="ticket-name">${ev.employee_name}</span>
+          </div>
+          <div class="ticket-time">${fmtTime(ev.created_at)}</div>
+        </div>
+        <div class="steps">
+          ${ev.steps.map(s => `
+            <div class="step ${s.done ? 'done' : ''} ${s.gdpr ? 'flag' : ''}">
+              <span class="box"></span>${s.label}
+            </div>
+          `).join('')}
+        </div>
+        <div class="ticket-footer">
+          <span>routing through ${ev.steps.length} systems</span>
+          <span class="sot">${allDone ? '✓ single source of truth updated' : `— syncing (${doneCount}/${ev.steps.length}) —`}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function refreshEvents(){
+  const res = await fetch('/api/events');
+  const data = await res.json();
+  renderEvents(data.events);
+}
+
+async function refreshSystems(){
+  const res = await fetch('/api/systems');
+  const data = await res.json();
+  renderSystems(data.systems);
+}
+
+function setConn(status){
+  const dot = document.getElementById('connDot');
+  const text = document.getElementById('connText');
+  dot.className = 'conn-dot ' + status;
+  text.textContent = status === 'up' ? 'connected — polling API every ' + POLL_MS + 'ms'
+    : status === 'down' ? 'lost connection to API'
+    : 'connecting to API…';
+}
+
+async function poll(){
+  try{
+    await Promise.all([refreshEvents(), refreshSystems()]);
+    setConn('up');
+  }catch(e){
+    setConn('down');
+  }
+}
+
+poll();
+setInterval(poll, POLL_MS);
+</script>
+
+</body>
+</html>
