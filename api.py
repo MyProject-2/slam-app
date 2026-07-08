@@ -35,6 +35,19 @@ TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
 
+# Snowflake credentials for the "Synced to Snowflake" step (see
+# sync_to_snowflake). All five must be set for a real sync; otherwise it
+# simulates instead of failing, so the demo works without a Snowflake
+# account. SNOWFLAKE_ACCOUNT is the "<organization>-<account>" identifier
+# used in the account URL, e.g. "myorg-myaccount".
+SNOWFLAKE_ACCOUNT = os.environ.get("SNOWFLAKE_ACCOUNT")
+SNOWFLAKE_PAT = os.environ.get("SNOWFLAKE_PAT")
+SNOWFLAKE_DATABASE = os.environ.get("SNOWFLAKE_DATABASE")
+SNOWFLAKE_SCHEMA = os.environ.get("SNOWFLAKE_SCHEMA")
+SNOWFLAKE_WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE")
+SNOWFLAKE_ROLE = os.environ.get("SNOWFLAKE_ROLE")  # optional
+SNOWFLAKE_TABLE = os.environ.get("SNOWFLAKE_TABLE", "SLAM_EVENTS")
+
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -72,6 +85,68 @@ def send_sms(to_number: str, body: str) -> dict:
         return {"sent": False, "simulated": False, "to": to_number, "error": e.read().decode("utf-8", errors="replace")}
     except Exception as e:
         return {"sent": False, "simulated": False, "to": to_number, "error": str(e)}
+
+
+def sync_to_snowflake(record: dict) -> dict:
+    """Pushes a row for this event to Snowflake via the SQL API
+    (https://<account>.snowflakecomputing.com/api/v2/statements, plain
+    REST + a Programmatic Access Token — no snowflake-connector package,
+    keeping this app dependency-free). Falls back to a simulated sync
+    when SNOWFLAKE_ACCOUNT/SNOWFLAKE_PAT/SNOWFLAKE_DATABASE/
+    SNOWFLAKE_SCHEMA/SNOWFLAKE_WAREHOUSE aren't all set. Expects the
+    target table (SNOWFLAKE_TABLE, default SLAM_EVENTS) to already exist
+    with columns EVENT_ID, TICKET_ID, EVENT_TYPE, EMPLOYEE_ID, HRIS_ID,
+    EMPLOYEE_NAME, COUNTRY, SYNCED_AT."""
+    required = (SNOWFLAKE_ACCOUNT, SNOWFLAKE_PAT, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, SNOWFLAKE_WAREHOUSE)
+    if not all(required):
+        return {
+            "synced": False, "simulated": True, "record": record,
+            "note": "SNOWFLAKE_ACCOUNT/SNOWFLAKE_PAT/SNOWFLAKE_DATABASE/SNOWFLAKE_SCHEMA/SNOWFLAKE_WAREHOUSE not set — simulated only",
+        }
+
+    def binding(value, sql_type="TEXT"):
+        return {"type": sql_type, "value": "" if value is None else str(value)}
+
+    statement = (
+        f"INSERT INTO {SNOWFLAKE_TABLE} "
+        "(EVENT_ID, TICKET_ID, EVENT_TYPE, EMPLOYEE_ID, HRIS_ID, EMPLOYEE_NAME, COUNTRY, SYNCED_AT) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP())"
+    )
+    body = {
+        "statement": statement,
+        "database": SNOWFLAKE_DATABASE,
+        "schema": SNOWFLAKE_SCHEMA,
+        "warehouse": SNOWFLAKE_WAREHOUSE,
+        "timeout": 30,
+        "bindings": {
+            "1": binding(record.get("event_id"), "FIXED"),
+            "2": binding(record.get("ticket_id")),
+            "3": binding(record.get("event_type")),
+            "4": binding(record.get("employee_id"), "FIXED"),
+            "5": binding(record.get("hris_id")),
+            "6": binding(record.get("employee_name")),
+            "7": binding(record.get("country")),
+        },
+    }
+    if SNOWFLAKE_ROLE:
+        body["role"] = SNOWFLAKE_ROLE
+
+    url = f"https://{SNOWFLAKE_ACCOUNT}.snowflakecomputing.com/api/v2/statements"
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST", headers={
+        "Authorization": f"Bearer {SNOWFLAKE_PAT}",
+        "X-Snowflake-Authorization-Token-Type": "PROGRAMMATIC_ACCESS_TOKEN",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "SLAM/1.0",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        return {"synced": True, "simulated": False, "record": record, "statement_handle": payload.get("statementHandle")}
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False, "record": record, "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "record": record, "error": str(e)}
 
 
 def resolve_contact_channel(conn, employee_id):
@@ -217,6 +292,7 @@ def list_active_events():
 def advance_step(event_id):
     conn = db.get_conn()
     contact = None
+    employee_for_sync = None
     with db.get_lock():
         ev = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if ev is None:
@@ -243,12 +319,18 @@ def advance_step(event_id):
         if next_step["is_welcome_message"] and ev["employee_id"] is not None:
             contact = resolve_contact_channel(conn, ev["employee_id"])
 
+        if next_step["system_key"] == "snowflake" and ev["employee_id"] is not None:
+            employee_for_sync = conn.execute(
+                "SELECT hris_id, country FROM employees WHERE id = ?", (ev["employee_id"],)
+            ).fetchone()
+
         conn.commit()
 
     response = {"event_id": event_id, "advanced_step": next_step["label"], "remaining": remaining}
 
-    # Sending the SMS is a network call — do it after releasing the lock so
-    # a slow/unreachable Twilio doesn't stall every other request.
+    # Sending the SMS / syncing to Snowflake are network calls — do them
+    # after releasing the lock so a slow/unreachable service doesn't stall
+    # every other request.
     if next_step["is_welcome_message"]:
         if ev["employee_id"] is None:
             response["welcome_message"] = {"sent": False, "note": "No employee record linked to this ticket — nothing to message."}
@@ -259,6 +341,20 @@ def advance_step(event_id):
             result["channel"] = contact["channel"]
             response["welcome_message"] = result
             print(f"[welcome-message] {result}")
+
+    if next_step["system_key"] == "snowflake":
+        record = {
+            "event_id": ev["id"],
+            "ticket_id": ev["ticket_id"],
+            "event_type": ev["type"],
+            "employee_id": ev["employee_id"],
+            "hris_id": employee_for_sync["hris_id"] if employee_for_sync else None,
+            "employee_name": ev["employee_name"],
+            "country": employee_for_sync["country"] if employee_for_sync else None,
+        }
+        result = sync_to_snowflake(record)
+        response["snowflake_sync"] = result
+        print(f"[snowflake-sync] {result}")
 
     return 200, response
 

@@ -115,12 +115,21 @@ async function advance(id){
     const data = await res.json().catch(()=>({}));
     if(!res.ok){
       alert('Could not advance: ' + (data.error || res.status));
-    } else if(data.welcome_message){
-      const wm = data.welcome_message;
-      console.log('[welcome-message]', wm);
-      if(wm.simulated) console.log(`Simulated SMS to ${wm.to}: "${wm.body}"`);
-      else if(wm.sent) console.log(`SMS sent via Twilio to ${wm.to} (sid ${wm.sid})`);
-      else console.log(`SMS not sent: ${wm.note || wm.error}`);
+    } else {
+      if(data.welcome_message){
+        const wm = data.welcome_message;
+        console.log('[welcome-message]', wm);
+        if(wm.simulated) console.log(`Simulated SMS to ${wm.to}: "${wm.body}"`);
+        else if(wm.sent) console.log(`SMS sent via Twilio to ${wm.to} (sid ${wm.sid})`);
+        else console.log(`SMS not sent: ${wm.note || wm.error}`);
+      }
+      if(data.snowflake_sync){
+        const sf = data.snowflake_sync;
+        console.log('[snowflake-sync]', sf);
+        if(sf.simulated) console.log('Simulated Snowflake sync:', sf.record);
+        else if(sf.synced) console.log(`Synced to Snowflake (statement handle ${sf.statement_handle})`);
+        else console.log(`Snowflake sync failed: ${sf.note || sf.error}`);
+      }
     }
     await refresh();
   }catch(e){
