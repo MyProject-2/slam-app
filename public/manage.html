@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#F7C1D9">
+<title>SLAM — Active Users</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@700&family=Roboto+Flex:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#00112C;
+    --ink-soft:#5C687C;
+    --paper:#FFFFFF;
+    --paper-soft:#F7F7F8;
+    --pink:#F7C1D9;
+    --pink-deep:#EE93BC;
+    --red:#E22D2D;
+    --line:#DBDEE2;
+    --mono: 'Roboto Condensed', 'Roboto Flex', Arial, sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); font-family:'Roboto Flex','Roboto',-apple-system,Arial,sans-serif; min-height:100%;}
+  body{padding-bottom:80px;}
+  ::selection{background:var(--pink); color:var(--ink);}
+
+  header.hero{padding:40px 24px 32px; border-bottom:1px solid var(--ink); background:var(--pink);}
+  .back-link{font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink);
+    text-decoration:none; display:inline-flex; align-items:center; gap:6px; margin-bottom:18px;}
+  .back-link:hover{text-decoration:underline;}
+  .brand-mark{display:flex; align-items:center; gap:14px;}
+  .logo-badge{width:44px; height:44px; background:var(--ink); color:var(--pink); font-family:var(--mono); font-weight:700;
+    font-size:22px; display:flex; align-items:center; justify-content:center; border-radius:8px; flex-shrink:0;}
+  h1{font-family:var(--mono); font-size:clamp(32px,6vw,52px); font-weight:700; letter-spacing:-0.01em; text-transform:uppercase;}
+  .tagline{max-width:640px; margin-top:14px; font-size:15px; line-height:1.55; color:rgba(0,17,44,0.72);}
+
+  .section-label{padding:32px 24px 16px; font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
+    color:rgba(0,17,44,0.55); display:flex; align-items:center; gap:14px;}
+  .section-label::after{content:""; flex:1; height:1px; background:var(--line);}
+
+  .queue{margin:0 24px; display:flex; flex-direction:column; gap:14px;}
+  .empty-state{font-family:var(--mono); font-size:13px; color:rgba(0,17,44,0.4); border:1px dashed var(--line); padding:32px;
+    text-align:center;}
+
+  .user-card{border:1px solid var(--line); background:var(--paper-soft);}
+  .user-top{padding:16px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
+    border-bottom:1px solid var(--line);}
+  .user-id{font-family:var(--mono); font-size:13px;}
+  .user-id b{color:var(--ink);}
+  .user-name{color:rgba(0,17,44,0.6); font-family:var(--mono); font-size:12px;}
+  .tag{display:inline-block; font-family:var(--mono); font-size:10px; letter-spacing:0.08em; text-transform:uppercase;
+    padding:2px 8px; border-radius:2px; border:1px solid currentColor;}
+  .tag.starter{color:var(--red);}
+  .tag.mover{color:var(--ink);}
+  .tag.leaver{color:var(--ink-soft);}
+
+  .user-body{padding:16px 18px; display:flex; flex-direction:column; gap:14px;}
+  .steps{display:flex; flex-wrap:wrap; gap:8px;}
+  .step{display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11.5px; padding:7px 10px;
+    border:1px solid var(--line); border-radius:2px; color:rgba(0,17,44,0.35);}
+  .step .box{width:12px;height:12px;border:1px solid currentColor; flex-shrink:0; position:relative;}
+  .step.done{color:var(--ink); border-color:rgba(226,45,45,0.4); background:rgba(226,45,45,0.06);}
+  .step.done .box{background:var(--red); border-color:var(--red);}
+  .step.done .box::after{content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; color:#fff; font-weight:700;}
+  .step.next{color:var(--ink); border-color:var(--ink); font-weight:600;}
+  .step.flag{color:var(--pink-deep); border-color:rgba(238,147,188,0.6); background:rgba(238,147,188,0.12);}
+
+  .advance-row{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
+    padding-top:12px; border-top:1px dashed var(--line);}
+  .next-label{font-family:var(--mono); font-size:12px; color:rgba(0,17,44,0.6);}
+  .next-label b{color:var(--ink);}
+  .advance-btn{background:var(--ink); border:1px solid var(--ink); color:var(--pink); font-family:var(--mono); font-size:12px;
+    letter-spacing:0.08em; text-transform:uppercase; padding:10px 18px; cursor:pointer; transition:all .15s ease; border-radius:2px;}
+  .advance-btn:hover{background:var(--red); border-color:var(--red); color:#fff;}
+  .advance-btn:active{transform:scale(0.97);}
+  .advance-btn:disabled{opacity:0.4; cursor:not-allowed;}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="back-link" href="/">&larr; Back to SLAM</a>
+  <div class="brand-mark">
+    <div class="logo-badge">S</div>
+    <h1>Active Users</h1>
+  </div>
+  <p class="tagline">Everyone with a lifecycle event still in flight. Each ticket sits at its current step until you advance it — nothing moves on its own.</p>
+</header>
+
+<div class="section-label">Queue — waiting on the next step</div>
+<div class="queue" id="queue">
+  <div class="empty-state">— loading active users —</div>
+</div>
+
+<script>
+const POLL_MS = 1500;
+let advancing = new Set();
+
+function tagClassFor(type){
+  return {starter:'starter', mover:'mover', leaver:'leaver'}[type] || '';
+}
+
+async function advance(id){
+  if(advancing.has(id)) return;
+  advancing.add(id);
+  try{
+    const res = await fetch(`/api/events/${id}/advance`, {method:'POST'});
+    if(!res.ok){
+      const err = await res.json().catch(()=>({error:'Unknown error'}));
+      alert('Could not advance: ' + (err.error || res.status));
+    }
+    await refresh();
+  }catch(e){
+    alert('Could not reach the API. Is the server running?');
+  }finally{
+    advancing.delete(id);
+  }
+}
+
+function render(events){
+  const queue = document.getElementById('queue');
+  if(events.length === 0){
+    queue.innerHTML = '<div class="empty-state">— no active users. Fire a lifecycle event from the homepage to see it here —</div>';
+    return;
+  }
+
+  queue.innerHTML = events.map(ev => `
+    <div class="user-card">
+      <div class="user-top">
+        <div class="user-id">
+          <span class="tag ${tagClassFor(ev.type)}">${ev.type}</span>
+          &nbsp; <b>${ev.employee_name}</b> <span class="user-name">(${ev.ticket_id})</span>
+        </div>
+      </div>
+      <div class="user-body">
+        <div class="steps">
+          ${ev.steps.map(s => `
+            <div class="step ${s.done ? 'done' : ''} ${(!s.done && s.label === ev.next_step_label) ? 'next' : ''} ${s.gdpr ? 'flag' : ''}">
+              <span class="box"></span>${s.label}
+            </div>
+          `).join('')}
+        </div>
+        <div class="advance-row">
+          <span class="next-label">next up: <b>${ev.next_step_label}</b></span>
+          <button class="advance-btn" ${advancing.has(ev.id) ? 'disabled' : ''} onclick="advance(${ev.id})">Advance &rarr;</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function refresh(){
+  const res = await fetch('/api/events/active');
+  const data = await res.json();
+  render(data.events);
+}
+
+refresh();
+setInterval(refresh, POLL_MS);
+</script>
+
+</body>
+</html>
