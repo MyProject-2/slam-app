@@ -20,11 +20,23 @@ def init_db():
     with _lock:
         _conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS employees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hris_id TEXT UNIQUE,              -- system-of-record ID; populated once the HRIS webhook lands
+                full_name TEXT NOT NULL,
+                personal_email TEXT,
+                personal_phone TEXT,
+                company_email TEXT,
+                company_phone TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            );
+
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticket_id TEXT NOT NULL,
                 type TEXT NOT NULL,               -- starter | mover | leaver
                 employee_name TEXT NOT NULL,
+                employee_id INTEGER REFERENCES employees(id),
                 status TEXT NOT NULL DEFAULT 'processing',  -- processing | complete
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
             );
@@ -43,6 +55,15 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_steps_event ON event_steps(event_id);
             """
         )
+        # Existing databases predate the employees table/employee_id column;
+        # CREATE TABLE IF NOT EXISTS won't retrofit a column onto an events
+        # table that already exists, so add it by hand when missing. This
+        # must run before the employee_id index below, since that index
+        # creation would otherwise fail against a pre-existing table.
+        existing_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(events)")}
+        if "employee_id" not in existing_columns:
+            _conn.execute("ALTER TABLE events ADD COLUMN employee_id INTEGER REFERENCES employees(id)")
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id)")
         _conn.commit()
 
 
