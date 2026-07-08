@@ -7,6 +7,7 @@ Each function implements one API endpoint's business logic and returns
 http.server request in play.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -14,6 +15,9 @@ import os
 import re
 import sqlite3
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 
 import db
@@ -24,6 +28,13 @@ import workflow
 # var in any environment that isn't just this local demo.
 HRIS_WEBHOOK_SECRET = os.environ.get("HRIS_WEBHOOK_SECRET", "demo-insecure-secret-change-me")
 
+# Twilio credentials for the welcome-message SMS step (see send_sms). All
+# three must be set for real sends; otherwise send_sms simulates instead
+# of failing, so the demo works without a Twilio account.
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
+
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -32,6 +43,57 @@ def now_iso():
 def make_ticket_id(event_type: str) -> str:
     prefix = {"starter": "SL", "mover": "ML", "leaver": "XL"}.get(event_type, "EV")
     return f"{prefix}-{int(time.time() * 1000) % 100000}"
+
+
+def send_sms(to_number: str, body: str) -> dict:
+    """Sends an SMS via Twilio's plain REST API (urllib only — no `twilio`
+    package, to keep this app dependency-free). Falls back to a simulated
+    send when TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER
+    aren't all set, so the welcome-message step still works in a demo
+    without a real Twilio account."""
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER):
+        return {
+            "sent": False, "simulated": True, "to": to_number, "body": body,
+            "note": "TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER not set — simulated only",
+        }
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+    data = urllib.parse.urlencode({"To": to_number, "From": TWILIO_FROM_NUMBER, "Body": body}).encode("utf-8")
+    auth = base64.b64encode(f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode("utf-8")).decode("ascii")
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "Authorization": f"Basic {auth}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        return {"sent": True, "simulated": False, "to": to_number, "sid": payload.get("sid")}
+    except urllib.error.HTTPError as e:
+        return {"sent": False, "simulated": False, "to": to_number, "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"sent": False, "simulated": False, "to": to_number, "error": str(e)}
+
+
+def resolve_contact_channel(conn, employee_id):
+    """Personal contact info before Access is provisioned; company contact
+    info after, if the employee has one — otherwise stays on personal
+    permanently for staff who never get a company account. Looks at
+    whether this employee's most recent 'accessit' step is done, since
+    that's the real-world moment company accounts start existing."""
+    employee = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+    if employee is None:
+        return None
+
+    access_step = conn.execute(
+        "SELECT es.done FROM event_steps es JOIN events e ON es.event_id = e.id "
+        "WHERE e.employee_id = ? AND es.system_key = 'accessit' ORDER BY es.id DESC LIMIT 1",
+        (employee_id,),
+    ).fetchone()
+    access_provisioned = bool(access_step and access_step["done"])
+
+    if access_provisioned and employee["company_phone"]:
+        return {"channel": "company", "phone": employee["company_phone"], "email": employee["company_email"]}
+    return {"channel": "personal", "phone": employee["personal_phone"], "email": employee["personal_email"]}
 
 
 def _insert_event(conn, event_type, employee_name, employee_id=None):
@@ -47,8 +109,10 @@ def _insert_event(conn, event_type, employee_name, employee_id=None):
     event_id = cur.lastrowid
     for idx, step in enumerate(steps_meta):
         conn.execute(
-            "INSERT INTO event_steps (event_id, step_index, label, system_key, is_gdpr_flag, done) VALUES (?, ?, ?, ?, ?, 0)",
-            (event_id, idx, step["label"], step.get("system"), int(step.get("gdpr", False))),
+            "INSERT INTO event_steps (event_id, step_index, label, system_key, is_gdpr_flag, is_welcome_message, done) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0)",
+            (event_id, idx, step["label"], step.get("system"),
+             int(step.get("gdpr", False)), int(step.get("welcome_message", False))),
         )
     return event_id, ticket_id
 
@@ -77,6 +141,7 @@ def list_events():
                         "label": s["label"],
                         "system": s["system_key"],
                         "gdpr": bool(s["is_gdpr_flag"]),
+                        "welcome_message": bool(s["is_welcome_message"]),
                         "done": bool(s["done"]),
                         "done_at": s["done_at"],
                     }
@@ -138,6 +203,7 @@ def list_active_events():
                         "label": s["label"],
                         "system": s["system_key"],
                         "gdpr": bool(s["is_gdpr_flag"]),
+                        "welcome_message": bool(s["is_welcome_message"]),
                         "done": bool(s["done"]),
                         "done_at": s["done_at"],
                     }
@@ -150,6 +216,7 @@ def list_active_events():
 
 def advance_step(event_id):
     conn = db.get_conn()
+    contact = None
     with db.get_lock():
         ev = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if ev is None:
@@ -172,9 +239,28 @@ def advance_step(event_id):
         ).fetchone()["c"]
         if remaining == 0:
             conn.execute("UPDATE events SET status = 'complete' WHERE id = ?", (event_id,))
+
+        if next_step["is_welcome_message"] and ev["employee_id"] is not None:
+            contact = resolve_contact_channel(conn, ev["employee_id"])
+
         conn.commit()
 
-    return 200, {"event_id": event_id, "advanced_step": next_step["label"], "remaining": remaining}
+    response = {"event_id": event_id, "advanced_step": next_step["label"], "remaining": remaining}
+
+    # Sending the SMS is a network call — do it after releasing the lock so
+    # a slow/unreachable Twilio doesn't stall every other request.
+    if next_step["is_welcome_message"]:
+        if ev["employee_id"] is None:
+            response["welcome_message"] = {"sent": False, "note": "No employee record linked to this ticket — nothing to message."}
+        elif not contact or not contact["phone"]:
+            response["welcome_message"] = {"sent": False, "note": "No phone number on file for this employee — skipped."}
+        else:
+            result = send_sms(contact["phone"], f"Welcome to JOE & THE JUICE, {ev['employee_name']}! Your onboarding is underway.")
+            result["channel"] = contact["channel"]
+            response["welcome_message"] = result
+            print(f"[welcome-message] {result}")
+
+    return 200, response
 
 
 def verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
@@ -301,6 +387,9 @@ def simulate_hris_event(body):
             "hris_id": _slugify_hris_id(employee_name),
             "full_name": employee_name,
             "personal_email": f"{local_part}@personal.example",
+            # 555-01xx is reserved for fictional use (US) — never a real subscriber,
+            # so the welcome-message SMS step has something to resolve/simulate against.
+            "personal_phone": "+15555550100",
         },
     }
     raw_body = json.dumps(payload).encode("utf-8")

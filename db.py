@@ -49,6 +49,7 @@ def init_db():
                 label TEXT NOT NULL,
                 system_key TEXT,                  -- which system this step touches, if any
                 is_gdpr_flag INTEGER NOT NULL DEFAULT 0,
+                is_welcome_message INTEGER NOT NULL DEFAULT 0,
                 done INTEGER NOT NULL DEFAULT 0,
                 done_at TEXT
             );
@@ -70,6 +71,11 @@ def init_db():
         existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
         if "country" not in existing_employee_columns:
             _conn.execute("ALTER TABLE employees ADD COLUMN country TEXT")
+
+        # ...and for event_steps.is_welcome_message.
+        existing_step_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(event_steps)")}
+        if "is_welcome_message" not in existing_step_columns:
+            _conn.execute("ALTER TABLE event_steps ADD COLUMN is_welcome_message INTEGER NOT NULL DEFAULT 0")
         _conn.commit()
 
 

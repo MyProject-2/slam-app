@@ -69,6 +69,7 @@
   .step.done .box::after{content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:9px; color:#fff; font-weight:700;}
   .step.next{color:var(--ink); border-color:var(--ink); font-weight:600;}
   .step.flag{color:var(--pink-deep); border-color:rgba(238,147,188,0.6); background:rgba(238,147,188,0.12);}
+  .step.welcome{border-style:dashed; border-color:var(--ink);}
 
   .advance-row{display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
     padding-top:12px; border-top:1px dashed var(--line);}
@@ -111,9 +112,15 @@ async function advance(id){
   advancing.add(id);
   try{
     const res = await fetch(`/api/events/${id}/advance`, {method:'POST'});
+    const data = await res.json().catch(()=>({}));
     if(!res.ok){
-      const err = await res.json().catch(()=>({error:'Unknown error'}));
-      alert('Could not advance: ' + (err.error || res.status));
+      alert('Could not advance: ' + (data.error || res.status));
+    } else if(data.welcome_message){
+      const wm = data.welcome_message;
+      console.log('[welcome-message]', wm);
+      if(wm.simulated) console.log(`Simulated SMS to ${wm.to}: "${wm.body}"`);
+      else if(wm.sent) console.log(`SMS sent via Twilio to ${wm.to} (sid ${wm.sid})`);
+      else console.log(`SMS not sent: ${wm.note || wm.error}`);
     }
     await refresh();
   }catch(e){
@@ -141,7 +148,7 @@ function render(events){
       <div class="user-body">
         <div class="steps">
           ${ev.steps.map(s => `
-            <div class="step ${s.done ? 'done' : ''} ${(!s.done && s.label === ev.next_step_label) ? 'next' : ''} ${s.gdpr ? 'flag' : ''}">
+            <div class="step ${s.done ? 'done' : ''} ${(!s.done && s.label === ev.next_step_label) ? 'next' : ''} ${s.gdpr ? 'flag' : ''} ${s.welcome_message ? 'welcome' : ''}">
               <span class="box"></span>${s.label}
             </div>
           `).join('')}

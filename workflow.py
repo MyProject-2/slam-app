@@ -18,6 +18,7 @@ SYSTEMS = [
 PIPELINES = {
     "starter": [
         {"label": "Core HR record created", "system": "corehr"},
+        {"label": "Welcome message sent", "system": None, "welcome_message": True},
         {"label": "GDPR consent check", "system": None, "gdpr": True},
         {"label": "Access + accounts provisioned", "system": "accessit"},
         {"label": "Payroll & banking linked", "system": "payroll"},
