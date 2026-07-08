@@ -10,6 +10,7 @@ http.server request in play.
 import hashlib
 import hmac
 import os
+import sqlite3
 import time
 from datetime import datetime, timezone
 
@@ -265,6 +266,84 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
         conn.commit()
 
     return 201, {"id": event_id, "ticket_id": ticket_id, "type": event_type, "employee_id": employee_id}
+
+
+_EMPLOYEE_FIELDS = ("hris_id", "full_name", "country", "personal_email", "personal_phone", "company_email", "company_phone")
+
+
+def list_employees():
+    conn = db.get_conn()
+    with db.get_lock():
+        rows = conn.execute("SELECT * FROM employees ORDER BY full_name ASC").fetchall()
+    return 200, {"employees": [dict(row) for row in rows]}
+
+
+def create_employee(body):
+    body = body or {}
+    full_name = (body.get("full_name") or "").strip()
+    if not full_name:
+        return 400, {"error": "full_name is required"}
+
+    values = [body.get(f) or None for f in _EMPLOYEE_FIELDS]
+    values[_EMPLOYEE_FIELDS.index("full_name")] = full_name
+
+    conn = db.get_conn()
+    with db.get_lock():
+        try:
+            cur = conn.execute(
+                f"INSERT INTO employees ({', '.join(_EMPLOYEE_FIELDS)}) VALUES ({', '.join('?' * len(_EMPLOYEE_FIELDS))})",
+                values,
+            )
+        except sqlite3.IntegrityError:
+            return 409, {"error": f"An employee with hris_id '{body.get('hris_id')}' already exists"}
+        conn.commit()
+        row = conn.execute("SELECT * FROM employees WHERE id = ?", (cur.lastrowid,)).fetchone()
+
+    return 201, {"employee": dict(row)}
+
+
+def update_employee(employee_id, body):
+    body = body or {}
+    full_name = (body.get("full_name") or "").strip()
+    if not full_name:
+        return 400, {"error": "full_name is required"}
+
+    values = [body.get(f) or None for f in _EMPLOYEE_FIELDS]
+    values[_EMPLOYEE_FIELDS.index("full_name")] = full_name
+
+    conn = db.get_conn()
+    with db.get_lock():
+        existing = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if existing is None:
+            return 404, {"error": "Employee not found"}
+        try:
+            conn.execute(
+                f"UPDATE employees SET {', '.join(f + ' = ?' for f in _EMPLOYEE_FIELDS)} WHERE id = ?",
+                values + [employee_id],
+            )
+        except sqlite3.IntegrityError:
+            return 409, {"error": f"An employee with hris_id '{body.get('hris_id')}' already exists"}
+        conn.commit()
+        row = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+
+    return 200, {"employee": dict(row)}
+
+
+def delete_employee(employee_id):
+    conn = db.get_conn()
+    with db.get_lock():
+        existing = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if existing is None:
+            return 404, {"error": "Employee not found"}
+        linked = conn.execute(
+            "SELECT COUNT(*) AS c FROM events WHERE employee_id = ?", (employee_id,)
+        ).fetchone()["c"]
+        if linked > 0:
+            return 400, {"error": f"Cannot delete — {linked} event(s) reference this employee"}
+        conn.execute("DELETE FROM employees WHERE id = ?", (employee_id,))
+        conn.commit()
+
+    return 200, {"deleted": True}
 
 
 def systems_status():

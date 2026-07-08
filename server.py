@@ -30,6 +30,7 @@ PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file
 PORT = int(os.environ.get("PORT", 8000))
 
 ADVANCE_RE = re.compile(r"^/api/events/(\d+)/advance$")
+EMPLOYEE_RE = re.compile(r"^/api/employees/(\d+)$")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -75,6 +76,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             self._send_json(200, {"ok": True, "time": api.now_iso()})
+            return
+        if path == "/api/employees":
+            status, payload = api.list_employees()
+            self._send_json(status, payload)
             return
 
         # static file serving
@@ -129,12 +134,43 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(status, payload)
             return
 
+        if parsed.path == "/api/employees":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status, payload = api.create_employee(body)
+            self._send_json(status, payload)
+            return
+
+        self._send_json(404, {"error": "Not found"})
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        m = EMPLOYEE_RE.match(parsed.path)
+        if m:
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status, payload = api.update_employee(int(m.group(1)), body)
+            self._send_json(status, payload)
+            return
         self._send_json(404, {"error": "Not found"})
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/events":
             status, payload = api.clear_events()
+            self._send_json(status, payload)
+            return
+        m = EMPLOYEE_RE.match(parsed.path)
+        if m:
+            status, payload = api.delete_employee(int(m.group(1)))
             self._send_json(status, payload)
             return
         self._send_json(404, {"error": "Not found"})

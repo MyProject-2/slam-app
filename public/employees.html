@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#F7C1D9">
+<title>SLAM — Employees</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@700&family=Roboto+Flex:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#00112C;
+    --ink-soft:#5C687C;
+    --paper:#FFFFFF;
+    --paper-soft:#F7F7F8;
+    --pink:#F7C1D9;
+    --pink-deep:#EE93BC;
+    --red:#E22D2D;
+    --line:#DBDEE2;
+    --mono: 'Roboto Condensed', 'Roboto Flex', Arial, sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); font-family:'Roboto Flex','Roboto',-apple-system,Arial,sans-serif; min-height:100%;}
+  body{padding-bottom:80px;}
+  ::selection{background:var(--pink); color:var(--ink);}
+
+  header.hero{padding:40px 24px 32px; border-bottom:1px solid var(--ink); background:var(--pink);}
+  .back-link{font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink);
+    text-decoration:none; display:inline-flex; align-items:center; gap:6px; margin-bottom:18px;}
+  .back-link:hover{text-decoration:underline;}
+  .brand-mark{display:flex; align-items:center; gap:14px;}
+  .logo-badge{width:44px; height:44px; background:var(--ink); color:var(--pink); font-family:var(--mono); font-weight:700;
+    font-size:22px; display:flex; align-items:center; justify-content:center; border-radius:8px; flex-shrink:0;}
+  h1{font-family:var(--mono); font-size:clamp(32px,6vw,52px); font-weight:700; letter-spacing:-0.01em; text-transform:uppercase;}
+  .tagline{max-width:640px; margin-top:14px; font-size:15px; line-height:1.55; color:rgba(0,17,44,0.72);}
+
+  .section-label{padding:32px 24px 16px; font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
+    color:rgba(0,17,44,0.55); display:flex; align-items:center; gap:14px;}
+  .section-label::after{content:""; flex:1; height:1px; background:var(--line);}
+
+  .panel{margin:0 24px; border:1px solid var(--line); background:var(--paper-soft); padding:20px;}
+  .form-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;}
+  .field{display:flex; flex-direction:column; gap:6px;}
+  .field label{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(0,17,44,0.55);}
+  .field input{background:var(--paper); border:1px solid var(--line); color:var(--ink); font-family:'Roboto Flex','Roboto',sans-serif;
+    font-size:13px; padding:9px 10px; border-radius:2px; outline:none;}
+  .field input:focus{border-color:var(--red);}
+  .form-actions{margin-top:16px; display:flex; align-items:center; gap:14px;}
+  .btn{font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; padding:11px 18px; cursor:pointer;
+    transition:all .15s ease; border-radius:2px; border:1px solid var(--ink);}
+  .btn-primary{background:var(--ink); color:var(--pink);}
+  .btn-primary:hover{background:var(--red); border-color:var(--red); color:#fff;}
+  .btn-ghost{background:transparent; color:var(--ink);}
+  .btn-ghost:hover{border-color:var(--red); color:var(--red);}
+  .btn-danger{background:transparent; color:var(--red); border-color:var(--red);}
+  .btn-danger:hover{background:var(--red); color:#fff;}
+  .btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .form-error{font-family:var(--mono); font-size:12px; color:var(--red);}
+
+  .roster{margin:0 24px; display:flex; flex-direction:column; gap:12px;}
+  .empty-state{font-family:var(--mono); font-size:13px; color:rgba(0,17,44,0.4); border:1px dashed var(--line); padding:32px;
+    text-align:center;}
+
+  .emp-card{border:1px solid var(--line); background:var(--paper); padding:16px 18px;}
+  .emp-view{display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;}
+  .emp-main b{font-size:15px;}
+  .emp-main .hris{font-family:var(--mono); font-size:11px; color:rgba(0,17,44,0.45); margin-left:8px;}
+  .emp-details{margin-top:8px; display:flex; flex-wrap:wrap; gap:10px; font-family:var(--mono); font-size:11.5px; color:var(--ink-soft);}
+  .emp-details span{border:1px solid var(--line); border-radius:2px; padding:3px 8px;}
+  .emp-actions{display:flex; gap:8px; flex-shrink:0;}
+  .emp-actions .btn{padding:7px 12px; font-size:11px;}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="back-link" href="/manage.html">&larr; Back to Active Users</a>
+  <div class="brand-mark">
+    <div class="logo-badge">S</div>
+    <h1>Employees</h1>
+  </div>
+  <p class="tagline">The employee roster behind SLAM. Records normally arrive from the HRIS webhook — this page lets you add, edit, or remove them by hand for testing and demos.</p>
+</header>
+
+<div class="section-label">Add employee</div>
+<div class="panel">
+  <form id="addForm">
+    <div class="form-grid">
+      <div class="field"><label for="f_full_name">Full name *</label><input id="f_full_name" required></div>
+      <div class="field"><label for="f_hris_id">HRIS ID</label><input id="f_hris_id"></div>
+      <div class="field"><label for="f_country">Country</label><input id="f_country" placeholder="e.g. DK"></div>
+      <div class="field"><label for="f_personal_email">Personal email</label><input id="f_personal_email" type="email"></div>
+      <div class="field"><label for="f_personal_phone">Personal phone</label><input id="f_personal_phone"></div>
+      <div class="field"><label for="f_company_email">Company email</label><input id="f_company_email" type="email"></div>
+      <div class="field"><label for="f_company_phone">Company phone</label><input id="f_company_phone"></div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Add employee</button>
+      <span class="form-error" id="addError"></span>
+    </div>
+  </form>
+</div>
+
+<div class="section-label">All employees</div>
+<div class="roster" id="roster">
+  <div class="empty-state">— loading employees —</div>
+</div>
+
+<script>
+let employees = [];
+let editingId = null;
+
+const FIELDS = ["hris_id", "full_name", "country", "personal_email", "personal_phone", "company_email", "company_phone"];
+
+function esc(v){
+  return (v ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function loadEmployees(){
+  const res = await fetch('/api/employees');
+  const data = await res.json();
+  employees = data.employees;
+  render();
+}
+
+function render(){
+  const roster = document.getElementById('roster');
+  if(employees.length === 0){
+    roster.innerHTML = '<div class="empty-state">— no employees yet. Add one above, or fire the HRIS webhook —</div>';
+    return;
+  }
+
+  roster.innerHTML = employees.map(emp => {
+    if(emp.id === editingId){
+      return `
+        <div class="emp-card">
+          <div class="form-grid">
+            <div class="field"><label>Full name *</label><input id="e_full_name" value="${esc(emp.full_name)}"></div>
+            <div class="field"><label>HRIS ID</label><input id="e_hris_id" value="${esc(emp.hris_id)}"></div>
+            <div class="field"><label>Country</label><input id="e_country" value="${esc(emp.country)}"></div>
+            <div class="field"><label>Personal email</label><input id="e_personal_email" value="${esc(emp.personal_email)}"></div>
+            <div class="field"><label>Personal phone</label><input id="e_personal_phone" value="${esc(emp.personal_phone)}"></div>
+            <div class="field"><label>Company email</label><input id="e_company_email" value="${esc(emp.company_email)}"></div>
+            <div class="field"><label>Company phone</label><input id="e_company_phone" value="${esc(emp.company_phone)}"></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" onclick="saveEdit(${emp.id})">Save</button>
+            <button class="btn btn-ghost" onclick="cancelEdit()">Cancel</button>
+            <span class="form-error" id="editError"></span>
+          </div>
+        </div>
+      `;
+    }
+    return `
+      <div class="emp-card">
+        <div class="emp-view">
+          <div class="emp-main">
+            <b>${esc(emp.full_name)}</b><span class="hris">${emp.hris_id ? '#' + esc(emp.hris_id) : 'no HRIS ID'}</span>
+            <div class="emp-details">
+              ${emp.country ? `<span>${esc(emp.country)}</span>` : ''}
+              ${emp.personal_email ? `<span>personal: ${esc(emp.personal_email)}</span>` : ''}
+              ${emp.personal_phone ? `<span>${esc(emp.personal_phone)}</span>` : ''}
+              ${emp.company_email ? `<span>company: ${esc(emp.company_email)}</span>` : ''}
+              ${emp.company_phone ? `<span>${esc(emp.company_phone)}</span>` : ''}
+            </div>
+          </div>
+          <div class="emp-actions">
+            <button class="btn btn-ghost" onclick="startEdit(${emp.id})">Edit</button>
+            <button class="btn btn-danger" onclick="deleteEmployee(${emp.id})">Delete</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function startEdit(id){
+  editingId = id;
+  render();
+}
+
+function cancelEdit(){
+  editingId = null;
+  render();
+}
+
+function collectFields(prefix){
+  const body = {};
+  for(const f of FIELDS){
+    const el = document.getElementById(prefix + f);
+    body[f] = el.value.trim() || null;
+  }
+  return body;
+}
+
+document.getElementById('addForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('addError');
+  errorEl.textContent = '';
+  const body = collectFields('f_');
+  try{
+    const res = await fetch('/api/employees', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if(!res.ok){
+      errorEl.textContent = data.error || 'Could not add employee';
+      return;
+    }
+    e.target.reset();
+    await loadEmployees();
+  }catch(err){
+    errorEl.textContent = 'Could not reach the API. Is the server running?';
+  }
+});
+
+async function saveEdit(id){
+  const errorEl = document.getElementById('editError');
+  const body = collectFields('e_');
+  try{
+    const res = await fetch(`/api/employees/${id}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if(!res.ok){
+      errorEl.textContent = data.error || 'Could not save changes';
+      return;
+    }
+    editingId = null;
+    await loadEmployees();
+  }catch(err){
+    errorEl.textContent = 'Could not reach the API. Is the server running?';
+  }
+}
+
+async function deleteEmployee(id){
+  if(!confirm('Delete this employee? This cannot be undone.')) return;
+  try{
+    const res = await fetch(`/api/employees/${id}`, {method: 'DELETE'});
+    const data = await res.json();
+    if(!res.ok){
+      alert(data.error || 'Could not delete employee');
+      return;
+    }
+    await loadEmployees();
+  }catch(err){
+    alert('Could not reach the API. Is the server running?');
+  }
+}
+
+loadEmployees();
+</script>
+
+</body>
+</html>
