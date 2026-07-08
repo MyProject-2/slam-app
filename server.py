@@ -117,6 +117,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(status, payload)
             return
 
+        if parsed.path == "/api/webhooks/hris":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            signature = self.headers.get("X-HRIS-Signature", "")
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status, payload = api.handle_hris_webhook(raw, signature, body)
+            self._send_json(status, payload)
+            return
+
         self._send_json(404, {"error": "Not found"})
 
     def do_DELETE(self):
@@ -130,6 +142,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     db.init_db()
+    if api.HRIS_WEBHOOK_SECRET == "demo-insecure-secret-change-me":
+        print("WARNING: HRIS_WEBHOOK_SECRET not set — using the insecure demo default. "
+              "Set a real secret via the HRIS_WEBHOOK_SECRET env var outside local demo use.")
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"SLAM demo running at http://localhost:{PORT}")
     try:
