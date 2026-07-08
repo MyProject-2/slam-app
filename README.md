@@ -12,9 +12,10 @@ so it runs anywhere Python 3 is installed.
 | Layer      | Tech                          | File(s)          |
 |------------|--------------------------------|-------------------|
 | Database   | SQLite (real `.db` file)      | `db.py`           |
-| Pipeline logic | Plain Python                | `pipelines.py`    |
-| API + server | `http.server` (built-in)    | `server.py`       |
-| Frontend   | HTML/CSS/JS, polls the API    | `public/index.html` |
+| Workflow logic | Plain Python                | `workflow.py`    |
+| API handlers | Plain Python                | `api.py`          |
+| HTTP routing / server | `http.server` (built-in) | `server.py` |
+| Frontend   | HTML/CSS/JS, polls the API    | `public/index.html`, `public/manage.html` |
 
 ## Run it
 

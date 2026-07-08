@@ -1,5 +1,5 @@
 """
-pipelines.py — the SLAM automation definitions.
+workflow.py — the SLAM automation definitions.
 
 Each lifecycle event type (starter / mover / leaver) maps to an ordered
 list of steps. Each step optionally touches a downstream "system" and/or
@@ -14,8 +14,6 @@ SYSTEMS = [
     {"key": "comms", "name": "Comms", "role": "slack / email groups"},
     {"key": "snowflake", "name": "Snowflake", "role": "people analytics"},
 ]
-
-STEP_DELAY_SECONDS = 0.6  # time between each step completing, for the "live" feel
 
 PIPELINES = {
     "starter": [
