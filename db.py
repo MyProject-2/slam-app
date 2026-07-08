@@ -24,6 +24,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 hris_id TEXT UNIQUE,              -- system-of-record ID; populated once the HRIS webhook lands
                 full_name TEXT NOT NULL,
+                country TEXT,                     -- ISO 3166-1 alpha-2, e.g. 'DK', 'GB' — drives country-specific GDPR/payroll rules
                 personal_email TEXT,
                 personal_phone TEXT,
                 company_email TEXT,
@@ -64,6 +65,11 @@ def init_db():
         if "employee_id" not in existing_columns:
             _conn.execute("ALTER TABLE events ADD COLUMN employee_id INTEGER REFERENCES employees(id)")
         _conn.execute("CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id)")
+
+        # Same story for employees.country, added after the table first shipped.
+        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
+        if "country" not in existing_employee_columns:
+            _conn.execute("ALTER TABLE employees ADD COLUMN country TEXT")
         _conn.commit()
 
 
