@@ -197,7 +197,7 @@
 </div>
 
 <div class="note">
-  <b>How this is wired:</b> the buttons above call <code>POST /api/events</code>, which writes a new row into SQLite with every pipeline step pending. Nothing advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step each ticket through its pipeline by hand via <code>POST /api/events/&lt;id&gt;/advance</code>. The page polls <code>GET /api/events</code> and <code>GET /api/systems</code> every second to render live state straight from the database — this browser tab and any other tab open to this server see the exact same data.
+  <b>How this is wired:</b> the buttons above call <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit — including the duplicate-starter rejection and unknown-employee checks. Nothing advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step each ticket through its pipeline by hand via <code>POST /api/events/&lt;id&gt;/advance</code>. The page polls <code>GET /api/events</code> and <code>GET /api/systems</code> every second to render live state straight from the database — this browser tab and any other tab open to this server see the exact same data.
 </div>
 
 <script>
@@ -216,13 +216,17 @@ function tagClassFor(type){
 async function fireTicket(type){
   const inputId = {starter:'nameStarter', mover:'nameMover', leaver:'nameLeaver'}[type];
   const name = document.getElementById(inputId).value.trim();
+  if(!name){
+    alert('Enter an employee name — the simulated HRIS webhook needs one to derive an HRIS ID.');
+    return;
+  }
   const btns = document.querySelectorAll('.fire-btn');
   btns.forEach(b=>b.disabled = true);
   try{
-    const res = await fetch('/api/events', {
+    const res = await fetch('/api/dev/simulate-hris', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({type, employee_name: name || undefined})
+      body: JSON.stringify({type, employee_name: name})
     });
     if(!res.ok){
       const err = await res.json().catch(()=>({error:'Unknown error'}));

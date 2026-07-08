@@ -9,7 +9,9 @@ http.server request in play.
 
 import hashlib
 import hmac
+import json
 import os
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -266,6 +268,44 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
         conn.commit()
 
     return 201, {"id": event_id, "ticket_id": ticket_id, "type": event_type, "employee_id": employee_id}
+
+
+def _slugify_hris_id(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    return f"SIM-{slug}" if slug else "SIM-unknown"
+
+
+def simulate_hris_event(body):
+    """Backs the homepage 'Simulate new starter/mover/leaver' buttons.
+    Builds a realistic HRIS webhook payload from just a name + event type,
+    signs it with our own HRIS_WEBHOOK_SECRET, and feeds it through
+    handle_hris_webhook() — the exact same path a real HRIS integration
+    would exercise (signature check, dedup, employee linkage), rather than
+    a separate shortcut around it. The name is deterministically turned
+    into a fake hris_id so firing 'starter' twice for the same name
+    demonstrates the dedup rejection, and firing 'mover'/'leaver' for a
+    name that never had a starter demonstrates the unknown-employee 404."""
+    body = body or {}
+    event_type = body.get("type")
+    employee_name = (body.get("employee_name") or "").strip()
+
+    if not employee_name:
+        return 400, {"error": "employee_name is required"}
+    if event_type not in workflow.PIPELINES:
+        return 400, {"error": f"Unknown event type '{event_type}'. Use starter, mover, or leaver."}
+
+    local_part = re.sub(r"[^a-z0-9.]+", ".", employee_name.strip().lower()).strip(".")
+    payload = {
+        "event_type": event_type,
+        "employee": {
+            "hris_id": _slugify_hris_id(employee_name),
+            "full_name": employee_name,
+            "personal_email": f"{local_part}@personal.example",
+        },
+    }
+    raw_body = json.dumps(payload).encode("utf-8")
+    signature = "sha256=" + hmac.new(HRIS_WEBHOOK_SECRET.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return handle_hris_webhook(raw_body, signature, payload)
 
 
 _EMPLOYEE_FIELDS = ("hris_id", "full_name", "country", "personal_email", "personal_phone", "company_email", "company_phone")
