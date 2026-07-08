@@ -36,6 +36,7 @@ the API, not local browser state.
 | `PORT` | Server port (default `8000`) |
 | `HRIS_WEBHOOK_SECRET` | Shared secret for verifying `X-HRIS-Signature` on inbound webhook calls. Falls back to an insecure demo default with a startup warning if unset. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Real Twilio credentials for the welcome-message SMS step. If any are unset, sends are simulated (logged, not actually sent) so the demo works without a Twilio account. |
+| `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PAT`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`, `SNOWFLAKE_WAREHOUSE` | Real Snowflake credentials for the "Synced to Snowflake" step (`SNOWFLAKE_ACCOUNT` is the `<organization>-<account>` identifier, e.g. `myorg-myaccount`; `SNOWFLAKE_PAT` is a [Programmatic Access Token](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens)). If any are unset, syncs are simulated. Optional: `SNOWFLAKE_ROLE`, `SNOWFLAKE_TABLE` (default `SLAM_EVENTS`). |
 
 ## How it works
 
@@ -63,10 +64,13 @@ every step is either advanced by hand or triggered by a real event.
    `resolve_contact_channel()` to decide personal vs. company contact
    info: personal before Access is provisioned, company after (if the
    employee has one), otherwise personal permanently.
-5. **Employees** (`/employees.html`) lets you view, add, edit, or delete
+5. Every pipeline's final **"Synced to Snowflake"** step pushes a row
+   (event, ticket, and employee identity) into a real Snowflake table via
+   the SQL API (or simulates it — see env vars above).
+6. **Employees** (`/employees.html`) lets you view, add, edit, or delete
    employee records directly — useful for demos/testing without going
    through the webhook.
-6. The frontend polls `GET /api/events`, `GET /api/events/active`, and
+7. The frontend polls `GET /api/events`, `GET /api/events/active`, and
    `GET /api/systems` roughly once a second and re-renders from what's
    actually in the database — this browser tab and any other tab open to
    this server see the exact same data.
