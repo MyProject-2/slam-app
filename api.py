@@ -48,6 +48,11 @@ SNOWFLAKE_WAREHOUSE = os.environ.get("SNOWFLAKE_WAREHOUSE")
 SNOWFLAKE_ROLE = os.environ.get("SNOWFLAKE_ROLE")  # optional
 SNOWFLAKE_TABLE = os.environ.get("SNOWFLAKE_TABLE", "SLAM_EVENTS")
 
+# BambooHR credentials for the Core HR steps (see sync_to_bamboohr). Both
+# must be set for a real sync; otherwise it simulates instead of failing.
+BAMBOOHR_SUBDOMAIN = os.environ.get("BAMBOOHR_SUBDOMAIN")
+BAMBOOHR_API_KEY = os.environ.get("BAMBOOHR_API_KEY")
+
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -147,6 +152,64 @@ def sync_to_snowflake(record: dict) -> dict:
         return {"synced": False, "simulated": False, "record": record, "error": e.read().decode("utf-8", errors="replace")}
     except Exception as e:
         return {"synced": False, "simulated": False, "record": record, "error": str(e)}
+
+
+def sync_to_bamboohr(full_name: str, work_email, event_type: str, existing_bamboohr_id):
+    """Creates or updates this employee's record in BambooHR — the real
+    action behind every pipeline's Core HR step (system_key == "corehr":
+    "Core HR record created"/"updated", "Last day confirmed"). Plain REST
+    via urllib (no SDK). Falls back to a simulated sync when
+    BAMBOOHR_SUBDOMAIN/BAMBOOHR_API_KEY aren't set.
+
+    BambooHR uses POST for both create (/v1/employees) and update
+    (/v1/employees/<id>) — not PUT/PATCH, which is non-standard REST but
+    is how their API actually works. When existing_bamboohr_id is None
+    this creates a new employee and returns their new BambooHR id (parsed
+    from the response's Location header) so the caller can persist it;
+    otherwise it updates the existing record in place. A "leaver" event
+    also sets employmentHistoryStatus to Terminated with today's date."""
+    if not (BAMBOOHR_SUBDOMAIN and BAMBOOHR_API_KEY):
+        return {
+            "synced": False, "simulated": True, "bamboohr_id": existing_bamboohr_id,
+            "note": "BAMBOOHR_SUBDOMAIN/BAMBOOHR_API_KEY not set — simulated only",
+        }
+
+    name_parts = full_name.strip().split(" ", 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else "(unknown)"
+
+    body = {"firstName": first_name, "lastName": last_name}
+    if work_email:
+        body["workEmail"] = work_email
+    if event_type == "leaver":
+        body["employmentHistoryStatus"] = "Terminated"
+        body["terminationDate"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    elif existing_bamboohr_id is None:
+        body["hireDate"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if existing_bamboohr_id is None:
+        url = f"https://{BAMBOOHR_SUBDOMAIN}.bamboohr.com/api/v1/employees"
+    else:
+        url = f"https://{BAMBOOHR_SUBDOMAIN}.bamboohr.com/api/v1/employees/{existing_bamboohr_id}"
+
+    auth = base64.b64encode(f"{BAMBOOHR_API_KEY}:x".encode("utf-8")).decode("ascii")
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST", headers={
+        "Authorization": f"Basic {auth}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            bamboohr_id = existing_bamboohr_id
+            if existing_bamboohr_id is None:
+                location = resp.headers.get("Location", "")
+                bamboohr_id = location.rstrip("/").rsplit("/", 1)[-1] or None
+        return {"synced": True, "simulated": False, "bamboohr_id": bamboohr_id}
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False, "bamboohr_id": existing_bamboohr_id,
+                "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "bamboohr_id": existing_bamboohr_id, "error": str(e)}
 
 
 def resolve_contact_channel(conn, employee_id):
@@ -293,6 +356,7 @@ def advance_step(event_id):
     conn = db.get_conn()
     contact = None
     employee_for_sync = None
+    employee_for_bamboohr = None
     with db.get_lock():
         ev = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if ev is None:
@@ -322,6 +386,12 @@ def advance_step(event_id):
         if next_step["system_key"] == "snowflake" and ev["employee_id"] is not None:
             employee_for_sync = conn.execute(
                 "SELECT hris_id, country FROM employees WHERE id = ?", (ev["employee_id"],)
+            ).fetchone()
+
+        if next_step["system_key"] == "corehr" and ev["employee_id"] is not None:
+            employee_for_bamboohr = conn.execute(
+                "SELECT company_email, personal_email, bamboohr_id FROM employees WHERE id = ?",
+                (ev["employee_id"],),
             ).fetchone()
 
         conn.commit()
@@ -355,6 +425,23 @@ def advance_step(event_id):
         result = sync_to_snowflake(record)
         response["snowflake_sync"] = result
         print(f"[snowflake-sync] {result}")
+
+    if next_step["system_key"] == "corehr":
+        if ev["employee_id"] is None:
+            response["bamboohr_sync"] = {"synced": False, "note": "No employee record linked to this ticket — nothing to sync."}
+        else:
+            work_email = (employee_for_bamboohr["company_email"] or employee_for_bamboohr["personal_email"]) if employee_for_bamboohr else None
+            existing_bamboohr_id = employee_for_bamboohr["bamboohr_id"] if employee_for_bamboohr else None
+            result = sync_to_bamboohr(ev["employee_name"], work_email, ev["type"], existing_bamboohr_id)
+            if result.get("bamboohr_id") and result["bamboohr_id"] != existing_bamboohr_id:
+                with db.get_lock():
+                    conn.execute(
+                        "UPDATE employees SET bamboohr_id = ? WHERE id = ?",
+                        (result["bamboohr_id"], ev["employee_id"]),
+                    )
+                    conn.commit()
+            response["bamboohr_sync"] = result
+            print(f"[bamboohr-sync] {result}")
 
     return 200, response
 

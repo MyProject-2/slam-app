@@ -29,6 +29,7 @@ def init_db():
                 personal_phone TEXT,
                 company_email TEXT,
                 company_phone TEXT,
+                bamboohr_id TEXT,                 -- BambooHR's own employee ID, set after the first successful Core HR sync
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
             );
 
@@ -76,6 +77,11 @@ def init_db():
         existing_step_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(event_steps)")}
         if "is_welcome_message" not in existing_step_columns:
             _conn.execute("ALTER TABLE event_steps ADD COLUMN is_welcome_message INTEGER NOT NULL DEFAULT 0")
+
+        # ...and for employees.bamboohr_id.
+        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
+        if "bamboohr_id" not in existing_employee_columns:
+            _conn.execute("ALTER TABLE employees ADD COLUMN bamboohr_id TEXT")
         _conn.commit()
 
 
