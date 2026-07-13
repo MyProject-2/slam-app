@@ -53,6 +53,12 @@ SNOWFLAKE_TABLE = os.environ.get("SNOWFLAKE_TABLE", "SLAM_EVENTS")
 BAMBOOHR_SUBDOMAIN = os.environ.get("BAMBOOHR_SUBDOMAIN")
 BAMBOOHR_API_KEY = os.environ.get("BAMBOOHR_API_KEY")
 
+# Okta credentials for the Access/IT steps (see sync_to_okta). Both must
+# be set for a real sync; otherwise it simulates instead of failing.
+# OKTA_ORG_URL is the full base URL, e.g. "https://dev-12345.okta.com".
+OKTA_ORG_URL = os.environ.get("OKTA_ORG_URL")
+OKTA_API_TOKEN = os.environ.get("OKTA_API_TOKEN")
+
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -212,6 +218,78 @@ def sync_to_bamboohr(full_name: str, work_email, event_type: str, existing_bambo
         return {"synced": False, "simulated": False, "bamboohr_id": existing_bamboohr_id, "error": str(e)}
 
 
+def sync_to_okta(full_name: str, email, event_type: str, existing_okta_id):
+    """Creates, updates, or deactivates this employee's Okta user account —
+    the real action behind every pipeline's Access/IT step (system_key ==
+    "accessit": "Access + accounts provisioned"/"re-scoped"/"revoked on
+    schedule"). Plain REST via urllib (no SDK). Falls back to a simulated
+    sync when OKTA_ORG_URL/OKTA_API_TOKEN aren't set.
+
+    starter (existing_okta_id is None) -> POST /api/v1/users?activate=true,
+    creating the account without setting a password (Okta handles
+    activation/invite) — returns the new user's id from the response body.
+    mover (existing_okta_id set) -> POST /api/v1/users/<id>, a partial
+    profile update (Okta merges — unspecified fields are left alone).
+    leaver -> POST /api/v1/users/<id>/lifecycle/deactivate, no body.
+
+    Okta requires a valid email for both the profile.email and
+    profile.login fields, so this is skipped (not simulated) when no
+    email is on file for the employee."""
+    if not (OKTA_ORG_URL and OKTA_API_TOKEN):
+        return {
+            "synced": False, "simulated": True, "okta_id": existing_okta_id,
+            "note": "OKTA_ORG_URL/OKTA_API_TOKEN not set — simulated only",
+        }
+    if not email:
+        return {"synced": False, "simulated": False, "okta_id": existing_okta_id,
+                "note": "No email on file for this employee — Okta requires one, skipped."}
+
+    name_parts = full_name.strip().split(" ", 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else "(unknown)"
+
+    headers = {
+        "Authorization": f"SSWS {OKTA_API_TOKEN}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    org = OKTA_ORG_URL.rstrip("/")
+
+    if event_type == "leaver" and existing_okta_id:
+        url = f"{org}/api/v1/users/{existing_okta_id}/lifecycle/deactivate"
+        req = urllib.request.Request(url, data=b"", method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15):
+                pass
+            return {"synced": True, "simulated": False, "okta_id": existing_okta_id, "status": "deactivated"}
+        except urllib.error.HTTPError as e:
+            return {"synced": False, "simulated": False, "okta_id": existing_okta_id,
+                    "error": e.read().decode("utf-8", errors="replace")}
+        except Exception as e:
+            return {"synced": False, "simulated": False, "okta_id": existing_okta_id, "error": str(e)}
+
+    profile = {"firstName": first_name, "lastName": last_name, "email": email}
+    if existing_okta_id is None:
+        profile["login"] = email
+        url = f"{org}/api/v1/users?activate=true"
+        body = {"profile": profile}
+    else:
+        url = f"{org}/api/v1/users/{existing_okta_id}"
+        body = {"profile": profile}
+
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        okta_id = payload.get("id", existing_okta_id)
+        return {"synced": True, "simulated": False, "okta_id": okta_id}
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False, "okta_id": existing_okta_id,
+                "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "okta_id": existing_okta_id, "error": str(e)}
+
+
 def resolve_contact_channel(conn, employee_id):
     """Personal contact info before Access is provisioned; company contact
     info after, if the employee has one — otherwise stays on personal
@@ -357,6 +435,7 @@ def advance_step(event_id):
     contact = None
     employee_for_sync = None
     employee_for_bamboohr = None
+    employee_for_okta = None
     with db.get_lock():
         ev = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if ev is None:
@@ -391,6 +470,12 @@ def advance_step(event_id):
         if next_step["system_key"] == "corehr" and ev["employee_id"] is not None:
             employee_for_bamboohr = conn.execute(
                 "SELECT company_email, personal_email, bamboohr_id FROM employees WHERE id = ?",
+                (ev["employee_id"],),
+            ).fetchone()
+
+        if next_step["system_key"] == "accessit" and ev["employee_id"] is not None:
+            employee_for_okta = conn.execute(
+                "SELECT company_email, personal_email, okta_id FROM employees WHERE id = ?",
                 (ev["employee_id"],),
             ).fetchone()
 
@@ -442,6 +527,23 @@ def advance_step(event_id):
                     conn.commit()
             response["bamboohr_sync"] = result
             print(f"[bamboohr-sync] {result}")
+
+    if next_step["system_key"] == "accessit":
+        if ev["employee_id"] is None:
+            response["okta_sync"] = {"synced": False, "note": "No employee record linked to this ticket — nothing to sync."}
+        else:
+            work_email = (employee_for_okta["company_email"] or employee_for_okta["personal_email"]) if employee_for_okta else None
+            existing_okta_id = employee_for_okta["okta_id"] if employee_for_okta else None
+            result = sync_to_okta(ev["employee_name"], work_email, ev["type"], existing_okta_id)
+            if result.get("okta_id") and result["okta_id"] != existing_okta_id:
+                with db.get_lock():
+                    conn.execute(
+                        "UPDATE employees SET okta_id = ? WHERE id = ?",
+                        (result["okta_id"], ev["employee_id"]),
+                    )
+                    conn.commit()
+            response["okta_sync"] = result
+            print(f"[okta-sync] {result}")
 
     return 200, response
 

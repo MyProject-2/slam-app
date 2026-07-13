@@ -30,6 +30,7 @@ def init_db():
                 company_email TEXT,
                 company_phone TEXT,
                 bamboohr_id TEXT,                 -- BambooHR's own employee ID, set after the first successful Core HR sync
+                okta_id TEXT,                      -- Okta's own user ID, set after the first successful Access/IT sync
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
             );
 
@@ -82,6 +83,11 @@ def init_db():
         existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
         if "bamboohr_id" not in existing_employee_columns:
             _conn.execute("ALTER TABLE employees ADD COLUMN bamboohr_id TEXT")
+
+        # ...and for employees.okta_id.
+        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
+        if "okta_id" not in existing_employee_columns:
+            _conn.execute("ALTER TABLE employees ADD COLUMN okta_id TEXT")
         _conn.commit()
 
 
