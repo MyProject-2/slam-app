@@ -37,6 +37,7 @@ the API, not local browser state.
 | `HRIS_WEBHOOK_SECRET` | Shared secret for verifying `X-HRIS-Signature` on inbound webhook calls. Falls back to an insecure demo default with a startup warning if unset. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Real Twilio credentials for the welcome-message SMS step. If any are unset, sends are simulated (logged, not actually sent) so the demo works without a Twilio account. |
 | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PAT`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`, `SNOWFLAKE_WAREHOUSE` | Real Snowflake credentials for the "Synced to Snowflake" step (`SNOWFLAKE_ACCOUNT` is the `<organization>-<account>` identifier, e.g. `myorg-myaccount`; `SNOWFLAKE_PAT` is a [Programmatic Access Token](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens)). If any are unset, syncs are simulated. Optional: `SNOWFLAKE_ROLE`, `SNOWFLAKE_TABLE` (default `SLAM_EVENTS`). |
+| `BAMBOOHR_SUBDOMAIN`, `BAMBOOHR_API_KEY` | Real BambooHR credentials for the Core HR steps ("Core HR record created/updated", "Last day confirmed") — `BAMBOOHR_SUBDOMAIN` is the `xyz` in `xyz.bamboohr.com`. If either is unset, syncs are simulated. |
 
 ## How it works
 
@@ -67,10 +68,16 @@ every step is either advanced by hand or triggered by a real event.
 5. Every pipeline's final **"Synced to Snowflake"** step pushes a row
    (event, ticket, and employee identity) into a real Snowflake table via
    the SQL API (or simulates it — see env vars above).
-6. **Employees** (`/employees.html`) lets you view, add, edit, or delete
+6. Every pipeline's **Core HR step** ("Core HR record created"/"updated",
+   "Last day confirmed") creates or updates the employee's real record in
+   BambooHR (or simulates it — see env vars above). A `starter` creates
+   the BambooHR record; `mover`/`leaver` update that same record (tracked
+   via `employees.bamboohr_id`) rather than creating duplicates; a
+   `leaver` also sets `employmentHistoryStatus` to `Terminated`.
+7. **Employees** (`/employees.html`) lets you view, add, edit, or delete
    employee records directly — useful for demos/testing without going
    through the webhook.
-7. The frontend polls `GET /api/events`, `GET /api/events/active`, and
+8. The frontend polls `GET /api/events`, `GET /api/events/active`, and
    `GET /api/systems` roughly once a second and re-renders from what's
    actually in the database — this browser tab and any other tab open to
    this server see the exact same data.
@@ -98,7 +105,8 @@ every step is either advanced by hand or triggered by a real event.
 - Swap `db.py` for Postgres/MySQL by replacing the `sqlite3` calls —
   the rest of the app doesn't care what's underneath.
 - Add real integrations by having a step's completion also call an
-  actual HRIS/IAM/payroll API, the way the welcome-message step already
-  calls Twilio.
+  actual HRIS/IAM/payroll API, the way the Core HR steps already call
+  BambooHR, the welcome-message step calls Twilio, and the Snowflake
+  step calls Snowflake's SQL API.
 - Add authentication, audit logging, or a "who changed what" trail on
   top of `event_steps` for a closer match to real GDPR/audit requirements.
