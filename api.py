@@ -13,7 +13,9 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
+import string
 import time
 import urllib.error
 import urllib.parse
@@ -58,6 +60,20 @@ BAMBOOHR_API_KEY = os.environ.get("BAMBOOHR_API_KEY")
 # OKTA_ORG_URL is the full base URL, e.g. "https://dev-12345.okta.com".
 OKTA_ORG_URL = os.environ.get("OKTA_ORG_URL")
 OKTA_API_TOKEN = os.environ.get("OKTA_API_TOKEN")
+
+# Microsoft Entra ID (Azure AD) credentials — an alternative Access/IT
+# integration to Okta (see sync_to_entra). JOE & THE JUICE's own domain
+# resolves to Microsoft 365 (confirmed via MX record lookup: mail routes
+# to *.mail.protection.outlook.com), making Entra the more realistic
+# identity provider for that specific company, which is why this exists
+# alongside Okta rather than replacing it outright — both are real,
+# tested integrations; advance_step() below is wired to call Entra.
+# ENTRA_DOMAIN is a verified domain on the tenant (e.g. the auto-assigned
+# "<name>.onmicrosoft.com"), used to build new users' sign-in address.
+ENTRA_TENANT_ID = os.environ.get("ENTRA_TENANT_ID")
+ENTRA_CLIENT_ID = os.environ.get("ENTRA_CLIENT_ID")
+ENTRA_CLIENT_SECRET = os.environ.get("ENTRA_CLIENT_SECRET")
+ENTRA_DOMAIN = os.environ.get("ENTRA_DOMAIN")
 
 
 def now_iso():
@@ -290,6 +306,124 @@ def sync_to_okta(full_name: str, email, event_type: str, existing_okta_id):
         return {"synced": False, "simulated": False, "okta_id": existing_okta_id, "error": str(e)}
 
 
+def _get_entra_token() -> str:
+    """Requests a Microsoft Graph access token via the OAuth 2.0
+    client-credentials flow. Fetched fresh on every call rather than
+    cached — sync calls here are infrequent (one per manual pipeline-step
+    advance), so token caching/refresh isn't worth the added complexity
+    for this demo. Raises on failure; callers catch it."""
+    url = f"https://login.microsoftonline.com/{ENTRA_TENANT_ID}/oauth2/v2.0/token"
+    data = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": ENTRA_CLIENT_ID,
+        "client_secret": ENTRA_CLIENT_SECRET,
+        "scope": "https://graph.microsoft.com/.default",
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "Content-Type": "application/x-www-form-urlencoded",
+    })
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    return payload["access_token"]
+
+
+def _generate_entra_password() -> str:
+    """A random password satisfying Entra's default policy (>=8 chars,
+    at least 3 of 4 character classes: upper/lower/digit/symbol) —
+    generated fresh per new hire and never reused or stored. The account
+    is created with forceChangePasswordNextSignIn, so this value is never
+    actually usable by anyone; it exists only because Graph requires
+    *some* password at creation time, unlike Okta's invite-only flow."""
+    classes = [string.ascii_uppercase, string.ascii_lowercase, string.digits, "!@#$%^&*"]
+    chars = [secrets.choice(c) for c in classes]
+    chars += [secrets.choice(string.ascii_letters + string.digits) for _ in range(12)]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
+def sync_to_entra(full_name: str, email, event_type: str, existing_entra_id):
+    """Creates, updates, or deactivates this employee's Microsoft Entra ID
+    account — the real action behind every pipeline's Access/IT step when
+    Entra is configured (see the module-level comment on ENTRA_TENANT_ID
+    for why this exists alongside sync_to_okta). Plain REST via urllib:
+    an OAuth 2.0 client-credentials token from login.microsoftonline.com,
+    then calls against Microsoft Graph (graph.microsoft.com/v1.0/users).
+    Falls back to a simulated sync when ENTRA_TENANT_ID/ENTRA_CLIENT_ID/
+    ENTRA_CLIENT_SECRET/ENTRA_DOMAIN aren't all set.
+
+    Unlike Okta, Graph requires a password at creation (see
+    _generate_entra_password) and requires the sign-in address
+    (userPrincipalName) to be on a domain the tenant has verified
+    (ENTRA_DOMAIN) — the employee's real email goes in the separate
+    "mail" field instead. Create returns 201 with the new user object;
+    update/deactivate (PATCH) return 204 with no body."""
+    required = (ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ENTRA_DOMAIN)
+    if not all(required):
+        return {
+            "synced": False, "simulated": True, "entra_id": existing_entra_id,
+            "note": "ENTRA_TENANT_ID/ENTRA_CLIENT_ID/ENTRA_CLIENT_SECRET/ENTRA_DOMAIN not set — simulated only",
+        }
+    if not email:
+        return {"synced": False, "simulated": False, "entra_id": existing_entra_id,
+                "note": "No email on file for this employee — Entra requires one, skipped."}
+
+    try:
+        token = _get_entra_token()
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False, "entra_id": existing_entra_id,
+                "error": f"token request failed: {e.read().decode('utf-8', errors='replace')}"}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "entra_id": existing_entra_id, "error": f"token request failed: {e}"}
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    mail_nickname = re.sub(r"[^a-zA-Z0-9.]+", ".", full_name.strip().lower()).strip(".") or "employee"
+
+    if event_type == "leaver" and existing_entra_id:
+        url = f"https://graph.microsoft.com/v1.0/users/{existing_entra_id}"
+        req = urllib.request.Request(url, data=json.dumps({"accountEnabled": False}).encode("utf-8"),
+                                      method="PATCH", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=15):
+                pass
+            return {"synced": True, "simulated": False, "entra_id": existing_entra_id, "status": "deactivated"}
+        except urllib.error.HTTPError as e:
+            return {"synced": False, "simulated": False, "entra_id": existing_entra_id,
+                    "error": e.read().decode("utf-8", errors="replace")}
+        except Exception as e:
+            return {"synced": False, "simulated": False, "entra_id": existing_entra_id, "error": str(e)}
+
+    if existing_entra_id is None:
+        url = "https://graph.microsoft.com/v1.0/users"
+        method = "POST"
+        body = {
+            "accountEnabled": True,
+            "displayName": full_name,
+            "mailNickname": mail_nickname,
+            "userPrincipalName": f"{mail_nickname}@{ENTRA_DOMAIN}",
+            "mail": email,
+            "passwordProfile": {
+                "forceChangePasswordNextSignIn": True,
+                "password": _generate_entra_password(),
+            },
+        }
+    else:
+        url = f"https://graph.microsoft.com/v1.0/users/{existing_entra_id}"
+        method = "PATCH"
+        body = {"displayName": full_name, "mail": email}
+
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8")
+            entra_id = json.loads(raw).get("id", existing_entra_id) if raw else existing_entra_id
+        return {"synced": True, "simulated": False, "entra_id": entra_id}
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False, "entra_id": existing_entra_id,
+                "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "entra_id": existing_entra_id, "error": str(e)}
+
+
 def resolve_contact_channel(conn, employee_id):
     """Personal contact info before Access is provisioned; company contact
     info after, if the employee has one — otherwise stays on personal
@@ -435,7 +569,7 @@ def advance_step(event_id):
     contact = None
     employee_for_sync = None
     employee_for_bamboohr = None
-    employee_for_okta = None
+    employee_for_access = None
     with db.get_lock():
         ev = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if ev is None:
@@ -474,8 +608,8 @@ def advance_step(event_id):
             ).fetchone()
 
         if next_step["system_key"] == "accessit" and ev["employee_id"] is not None:
-            employee_for_okta = conn.execute(
-                "SELECT company_email, personal_email, okta_id FROM employees WHERE id = ?",
+            employee_for_access = conn.execute(
+                "SELECT company_email, personal_email, entra_id FROM employees WHERE id = ?",
                 (ev["employee_id"],),
             ).fetchone()
 
@@ -530,20 +664,20 @@ def advance_step(event_id):
 
     if next_step["system_key"] == "accessit":
         if ev["employee_id"] is None:
-            response["okta_sync"] = {"synced": False, "note": "No employee record linked to this ticket — nothing to sync."}
+            response["entra_sync"] = {"synced": False, "note": "No employee record linked to this ticket — nothing to sync."}
         else:
-            work_email = (employee_for_okta["company_email"] or employee_for_okta["personal_email"]) if employee_for_okta else None
-            existing_okta_id = employee_for_okta["okta_id"] if employee_for_okta else None
-            result = sync_to_okta(ev["employee_name"], work_email, ev["type"], existing_okta_id)
-            if result.get("okta_id") and result["okta_id"] != existing_okta_id:
+            work_email = (employee_for_access["company_email"] or employee_for_access["personal_email"]) if employee_for_access else None
+            existing_entra_id = employee_for_access["entra_id"] if employee_for_access else None
+            result = sync_to_entra(ev["employee_name"], work_email, ev["type"], existing_entra_id)
+            if result.get("entra_id") and result["entra_id"] != existing_entra_id:
                 with db.get_lock():
                     conn.execute(
-                        "UPDATE employees SET okta_id = ? WHERE id = ?",
-                        (result["okta_id"], ev["employee_id"]),
+                        "UPDATE employees SET entra_id = ? WHERE id = ?",
+                        (result["entra_id"], ev["employee_id"]),
                     )
                     conn.commit()
-            response["okta_sync"] = result
-            print(f"[okta-sync] {result}")
+            response["entra_sync"] = result
+            print(f"[entra-sync] {result}")
 
     return 200, response
 
