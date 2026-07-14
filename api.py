@@ -75,6 +75,13 @@ ENTRA_CLIENT_ID = os.environ.get("ENTRA_CLIENT_ID")
 ENTRA_CLIENT_SECRET = os.environ.get("ENTRA_CLIENT_SECRET")
 ENTRA_DOMAIN = os.environ.get("ENTRA_DOMAIN")
 
+# Microsoft Teams / Microsoft 365 Group membership for the Comms steps
+# (see sync_to_teams). Reuses the same Entra app registration/OAuth
+# token as sync_to_entra — just needs one more Graph permission granted
+# to it (GroupMember.ReadWrite.All) plus the target Team's underlying
+# Microsoft 365 Group ID.
+TEAMS_GROUP_ID = os.environ.get("TEAMS_GROUP_ID")
+
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
@@ -424,6 +431,61 @@ def sync_to_entra(full_name: str, email, event_type: str, existing_entra_id):
         return {"synced": False, "simulated": False, "entra_id": existing_entra_id, "error": str(e)}
 
 
+def sync_to_teams(entra_id, event_type):
+    """Adds or removes this employee from a Microsoft Teams / Microsoft
+    365 Group — the real action behind the Comms steps ("Comms groups
+    added" on starter, "Comms access removed" on leaver; there's no
+    Comms step for mover). Reuses the Entra app registration's OAuth
+    token (_get_entra_token) rather than a separate credential set — it
+    only needs one more Graph permission (GroupMember.ReadWrite.All)
+    granted to that same app. Falls back to a simulated sync when Entra
+    credentials or TEAMS_GROUP_ID aren't all set, or skips (not
+    simulated) when the employee has no entra_id yet to add/remove.
+
+    The remove call deliberately keeps the '/$ref' suffix on the URL:
+    per Microsoft's own docs, an app with both GroupMember.ReadWrite.All
+    and User.ReadWrite.All (which this one has, from sync_to_entra)
+    would delete the *user* outright if that suffix were left off,
+    instead of just removing them from the group."""
+    if not (ENTRA_TENANT_ID and ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET and TEAMS_GROUP_ID):
+        return {
+            "synced": False, "simulated": True,
+            "note": "ENTRA_TENANT_ID/ENTRA_CLIENT_ID/ENTRA_CLIENT_SECRET/TEAMS_GROUP_ID not set — simulated only",
+        }
+    if not entra_id:
+        return {"synced": False, "simulated": False,
+                "note": "No Entra ID account for this employee yet — nothing to add/remove."}
+
+    try:
+        token = _get_entra_token()
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False,
+                "error": f"token request failed: {e.read().decode('utf-8', errors='replace')}"}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "error": f"token request failed: {e}"}
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    if event_type == "leaver":
+        url = f"https://graph.microsoft.com/v1.0/groups/{TEAMS_GROUP_ID}/members/{entra_id}/$ref"
+        req = urllib.request.Request(url, method="DELETE", headers=headers)
+        action = "removed"
+    else:
+        url = f"https://graph.microsoft.com/v1.0/groups/{TEAMS_GROUP_ID}/members/$ref"
+        body = {"@odata.id": f"https://graph.microsoft.com/v1.0/directoryObjects/{entra_id}"}
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST", headers=headers)
+        action = "added"
+
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            pass
+        return {"synced": True, "simulated": False, "status": action}
+    except urllib.error.HTTPError as e:
+        return {"synced": False, "simulated": False, "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"synced": False, "simulated": False, "error": str(e)}
+
+
 def resolve_contact_channel(conn, employee_id):
     """Personal contact info before Access is provisioned; company contact
     info after, if the employee has one — otherwise stays on personal
@@ -570,6 +632,7 @@ def advance_step(event_id):
     employee_for_sync = None
     employee_for_bamboohr = None
     employee_for_access = None
+    employee_for_comms = None
     with db.get_lock():
         ev = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         if ev is None:
@@ -611,6 +674,11 @@ def advance_step(event_id):
             employee_for_access = conn.execute(
                 "SELECT company_email, personal_email, entra_id FROM employees WHERE id = ?",
                 (ev["employee_id"],),
+            ).fetchone()
+
+        if next_step["system_key"] == "comms" and ev["employee_id"] is not None:
+            employee_for_comms = conn.execute(
+                "SELECT entra_id FROM employees WHERE id = ?", (ev["employee_id"],)
             ).fetchone()
 
         conn.commit()
@@ -678,6 +746,15 @@ def advance_step(event_id):
                     conn.commit()
             response["entra_sync"] = result
             print(f"[entra-sync] {result}")
+
+    if next_step["system_key"] == "comms":
+        if ev["employee_id"] is None:
+            response["teams_sync"] = {"synced": False, "note": "No employee record linked to this ticket — nothing to sync."}
+        else:
+            existing_entra_id = employee_for_comms["entra_id"] if employee_for_comms else None
+            result = sync_to_teams(existing_entra_id, ev["type"])
+            response["teams_sync"] = result
+            print(f"[teams-sync] {result}")
 
     return 200, response
 
