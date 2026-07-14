@@ -38,6 +38,7 @@ the API, not local browser state.
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | Real Twilio credentials for the welcome-message SMS step. If any are unset, sends are simulated (logged, not actually sent) so the demo works without a Twilio account. |
 | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PAT`, `SNOWFLAKE_DATABASE`, `SNOWFLAKE_SCHEMA`, `SNOWFLAKE_WAREHOUSE` | Real Snowflake credentials for the "Synced to Snowflake" step (`SNOWFLAKE_ACCOUNT` is the `<organization>-<account>` identifier, e.g. `myorg-myaccount`; `SNOWFLAKE_PAT` is a [Programmatic Access Token](https://docs.snowflake.com/en/user-guide/programmatic-access-tokens)). If any are unset, syncs are simulated. Optional: `SNOWFLAKE_ROLE`, `SNOWFLAKE_TABLE` (default `SLAM_EVENTS`). |
 | `BAMBOOHR_SUBDOMAIN`, `BAMBOOHR_API_KEY` | Real BambooHR credentials for the Core HR steps ("Core HR record created/updated", "Last day confirmed") — `BAMBOOHR_SUBDOMAIN` is the `xyz` in `xyz.bamboohr.com`. If either is unset, syncs are simulated. |
+| `OKTA_ORG_URL`, `OKTA_API_TOKEN` | Real Okta credentials for the Access/IT steps ("Access + accounts provisioned"/"re-scoped", "Access revoked on schedule") — `OKTA_ORG_URL` is your org's base URL, e.g. `https://dev-12345.okta.com`. If either is unset, syncs are simulated. |
 
 ## How it works
 
@@ -74,10 +75,16 @@ every step is either advanced by hand or triggered by a real event.
    the BambooHR record; `mover`/`leaver` update that same record (tracked
    via `employees.bamboohr_id`) rather than creating duplicates; a
    `leaver` also sets `employmentHistoryStatus` to `Terminated`.
-7. **Employees** (`/employees.html`) lets you view, add, edit, or delete
+7. Every pipeline's **Access/IT step** ("Access + accounts provisioned"/
+   "re-scoped", "Access revoked on schedule") creates, updates, or
+   deactivates the employee's real Okta account (or simulates it — see
+   env vars above). A `starter` creates the account (no password set —
+   Okta handles activation); `mover` updates that same account (tracked
+   via `employees.okta_id`); `leaver` deactivates it.
+8. **Employees** (`/employees.html`) lets you view, add, edit, or delete
    employee records directly — useful for demos/testing without going
    through the webhook.
-8. The frontend polls `GET /api/events`, `GET /api/events/active`, and
+9. The frontend polls `GET /api/events`, `GET /api/events/active`, and
    `GET /api/systems` roughly once a second and re-renders from what's
    actually in the database — this browser tab and any other tab open to
    this server see the exact same data.
@@ -106,7 +113,7 @@ every step is either advanced by hand or triggered by a real event.
   the rest of the app doesn't care what's underneath.
 - Add real integrations by having a step's completion also call an
   actual HRIS/IAM/payroll API, the way the Core HR steps already call
-  BambooHR, the welcome-message step calls Twilio, and the Snowflake
-  step calls Snowflake's SQL API.
+  BambooHR, the Access/IT steps call Okta, the welcome-message step
+  calls Twilio, and the Snowflake step calls Snowflake's SQL API.
 - Add authentication, audit logging, or a "who changed what" trail on
   top of `event_steps` for a closer match to real GDPR/audit requirements.
