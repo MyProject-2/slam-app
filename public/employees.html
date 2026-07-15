@@ -90,6 +90,7 @@
       <div class="field"><label for="f_full_name">Full name *</label><input id="f_full_name" required></div>
       <div class="field"><label for="f_hris_id">HRIS ID</label><input id="f_hris_id"></div>
       <div class="field"><label for="f_country">Country</label><input id="f_country" placeholder="e.g. DK"></div>
+      <div class="field"><label for="f_department">Department</label><input id="f_department" placeholder="e.g. Operations"></div>
       <div class="field"><label for="f_personal_email">Personal email</label><input id="f_personal_email" type="email"></div>
       <div class="field"><label for="f_personal_phone">Personal phone</label><input id="f_personal_phone"></div>
       <div class="field"><label for="f_company_email">Company email</label><input id="f_company_email" type="email"></div>
@@ -111,7 +112,7 @@
 let employees = [];
 let editingId = null;
 
-const FIELDS = ["hris_id", "full_name", "country", "personal_email", "personal_phone", "company_email", "company_phone"];
+const FIELDS = ["hris_id", "full_name", "country", "department", "personal_email", "personal_phone", "company_email", "company_phone"];
 
 function esc(v){
   return (v ?? '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -139,6 +140,7 @@ function render(){
             <div class="field"><label>Full name *</label><input id="e_full_name" value="${esc(emp.full_name)}"></div>
             <div class="field"><label>HRIS ID</label><input id="e_hris_id" value="${esc(emp.hris_id)}"></div>
             <div class="field"><label>Country</label><input id="e_country" value="${esc(emp.country)}"></div>
+            <div class="field"><label>Department</label><input id="e_department" value="${esc(emp.department)}"></div>
             <div class="field"><label>Personal email</label><input id="e_personal_email" value="${esc(emp.personal_email)}"></div>
             <div class="field"><label>Personal phone</label><input id="e_personal_phone" value="${esc(emp.personal_phone)}"></div>
             <div class="field"><label>Company email</label><input id="e_company_email" value="${esc(emp.company_email)}"></div>
@@ -159,6 +161,7 @@ function render(){
             <b>${esc(emp.full_name)}</b><span class="hris">${emp.hris_id ? '#' + esc(emp.hris_id) : 'no HRIS ID'}</span>
             <div class="emp-details">
               ${emp.country ? `<span>${esc(emp.country)}</span>` : ''}
+              ${emp.department ? `<span>${esc(emp.department)}</span>` : ''}
               ${emp.personal_email ? `<span>personal: ${esc(emp.personal_email)}</span>` : ''}
               ${emp.personal_phone ? `<span>${esc(emp.personal_phone)}</span>` : ''}
               ${emp.company_email ? `<span>company: ${esc(emp.company_email)}</span>` : ''}

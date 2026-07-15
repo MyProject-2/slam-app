@@ -25,6 +25,7 @@ def init_db():
                 hris_id TEXT UNIQUE,              -- system-of-record ID; populated once the HRIS webhook lands
                 full_name TEXT NOT NULL,
                 country TEXT,                     -- ISO 3166-1 alpha-2, e.g. 'DK', 'GB' — drives country-specific GDPR/payroll rules
+                department TEXT,                  -- e.g. 'Operations', 'People & Culture'
                 personal_email TEXT,
                 personal_phone TEXT,
                 company_email TEXT,
@@ -94,6 +95,11 @@ def init_db():
         existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
         if "entra_id" not in existing_employee_columns:
             _conn.execute("ALTER TABLE employees ADD COLUMN entra_id TEXT")
+
+        # ...and for employees.department.
+        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
+        if "department" not in existing_employee_columns:
+            _conn.execute("ALTER TABLE employees ADD COLUMN department TEXT")
         _conn.commit()
 
 

@@ -791,8 +791,8 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
           "event_type": "starter" | "mover" | "leaver",
           "employee": {
             "hris_id": "EMP-1234", "full_name": "...", "country": "DK",
-            "personal_email": "...", "personal_phone": "...",
-            "company_email": "...", "company_phone": "..."
+            "department": "Operations", "personal_email": "...",
+            "personal_phone": "...", "company_email": "...", "company_phone": "..."
           }
         }
     """
@@ -825,9 +825,9 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
                     "employee_id": existing["id"],
                 }
             cur = conn.execute(
-                "INSERT INTO employees (hris_id, full_name, country, personal_email, personal_phone, company_email, company_phone) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (hris_id, full_name, employee.get("country"), personal_email,
+                "INSERT INTO employees (hris_id, full_name, country, department, personal_email, personal_phone, company_email, company_phone) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (hris_id, full_name, employee.get("country"), employee.get("department"), personal_email,
                  employee.get("personal_phone"), company_email, employee.get("company_phone")),
             )
             employee_id = cur.lastrowid
@@ -838,11 +838,11 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
                              "The HRIS should send a starter event for this person first.",
                 }
             employee_id = existing["id"]
-            # Keep contact info/country current — the HRIS is the source of truth.
+            # Keep contact info/country/department current — the HRIS is the source of truth.
             conn.execute(
-                "UPDATE employees SET full_name = ?, country = ?, personal_email = ?, personal_phone = ?, "
+                "UPDATE employees SET full_name = ?, country = ?, department = ?, personal_email = ?, personal_phone = ?, "
                 "company_email = ?, company_phone = ? WHERE id = ?",
-                (full_name, employee.get("country"), personal_email, employee.get("personal_phone"),
+                (full_name, employee.get("country"), employee.get("department"), personal_email, employee.get("personal_phone"),
                  company_email, employee.get("company_phone"), employee_id),
             )
 
@@ -893,7 +893,7 @@ def simulate_hris_event(body):
     return handle_hris_webhook(raw_body, signature, payload)
 
 
-_EMPLOYEE_FIELDS = ("hris_id", "full_name", "country", "personal_email", "personal_phone", "company_email", "company_phone")
+_EMPLOYEE_FIELDS = ("hris_id", "full_name", "country", "department", "personal_email", "personal_phone", "company_email", "company_phone")
 
 
 def list_employees():
