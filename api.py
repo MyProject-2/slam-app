@@ -14,6 +14,7 @@ import json
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
 import string
 import time
@@ -21,6 +22,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import db
 import workflow
@@ -81,6 +84,17 @@ ENTRA_DOMAIN = os.environ.get("ENTRA_DOMAIN")
 # to it (GroupMember.ReadWrite.All) plus the target Team's underlying
 # Microsoft 365 Group ID.
 TEAMS_GROUP_ID = os.environ.get("TEAMS_GROUP_ID")
+
+# SMTP credentials for the welcome email with sign-in instructions (see
+# send_welcome_email). All three must be set for a real send; otherwise
+# it simulates instead of failing. Uses Python's stdlib smtplib/email
+# modules directly — no dependency — over implicit TLS (SMTPS), matching
+# one.com's mail setup (send.one.com:465).
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+SMTP_FROM = os.environ.get("SMTP_FROM") or SMTP_USERNAME
 
 
 def now_iso():
@@ -337,10 +351,13 @@ def _get_entra_token() -> str:
 def _generate_entra_password() -> str:
     """A random password satisfying Entra's default policy (>=8 chars,
     at least 3 of 4 character classes: upper/lower/digit/symbol) —
-    generated fresh per new hire and never reused or stored. The account
-    is created with forceChangePasswordNextSignIn, so this value is never
-    actually usable by anyone; it exists only because Graph requires
-    *some* password at creation time, unlike Okta's invite-only flow."""
+    generated fresh per new hire. Exists because Graph requires *some*
+    password at account-creation time, unlike Okta's invite-only flow.
+    Never stored or logged: sync_to_entra() hands it back to
+    advance_step() exactly once (via the "_temp_password" key, popped
+    immediately) so send_welcome_email() can deliver it to the new
+    hire — the account's forceChangePasswordNextSignIn flag means this
+    value only works for that one first sign-in anyway."""
     classes = [string.ascii_uppercase, string.ascii_lowercase, string.digits, "!@#$%^&*"]
     chars = [secrets.choice(c) for c in classes]
     chars += [secrets.choice(string.ascii_letters + string.digits) for _ in range(12)]
@@ -399,18 +416,22 @@ def sync_to_entra(full_name: str, email, event_type: str, existing_entra_id):
         except Exception as e:
             return {"synced": False, "simulated": False, "entra_id": existing_entra_id, "error": str(e)}
 
+    new_upn = f"{mail_nickname}@{ENTRA_DOMAIN}"
+    generated_password = None
+
     if existing_entra_id is None:
         url = "https://graph.microsoft.com/v1.0/users"
         method = "POST"
+        generated_password = _generate_entra_password()
         body = {
             "accountEnabled": True,
             "displayName": full_name,
             "mailNickname": mail_nickname,
-            "userPrincipalName": f"{mail_nickname}@{ENTRA_DOMAIN}",
+            "userPrincipalName": new_upn,
             "mail": email,
             "passwordProfile": {
                 "forceChangePasswordNextSignIn": True,
-                "password": _generate_entra_password(),
+                "password": generated_password,
             },
         }
     else:
@@ -423,7 +444,16 @@ def sync_to_entra(full_name: str, email, event_type: str, existing_entra_id):
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf-8")
             entra_id = json.loads(raw).get("id", existing_entra_id) if raw else existing_entra_id
-        return {"synced": True, "simulated": False, "entra_id": entra_id}
+        result = {"synced": True, "simulated": False, "entra_id": entra_id}
+        # Only present on a fresh create — advance_step() pops these two
+        # out immediately to hand off to send_welcome_email() and never
+        # lets them reach a log line or an HTTP response. See
+        # _generate_entra_password's docstring for why this is safe: the
+        # password is otherwise never persisted anywhere.
+        if generated_password:
+            result["_temp_password"] = generated_password
+            result["_upn"] = new_upn
+        return result
     except urllib.error.HTTPError as e:
         return {"synced": False, "simulated": False, "entra_id": existing_entra_id,
                 "error": e.read().decode("utf-8", errors="replace")}
@@ -484,6 +514,54 @@ def sync_to_teams(entra_id, event_type):
         return {"synced": False, "simulated": False, "error": e.read().decode("utf-8", errors="replace")}
     except Exception as e:
         return {"synced": False, "simulated": False, "error": str(e)}
+
+
+def send_welcome_email(to_email: str, full_name: str, upn: str, temp_password: str) -> dict:
+    """Sends a real welcome email with sign-in instructions and a
+    one-time temporary password, via plain SMTP (Python's stdlib
+    smtplib/email — no dependency) over implicit TLS. This is the
+    delivery mechanism the Entra integration was otherwise missing:
+    sync_to_entra() generates a random password so Graph will create
+    the account, but that value is useless to the actual new hire
+    unless it reaches them somehow — this is the one legitimate place
+    it's used, sent directly to them and nowhere else (never logged,
+    never included in advance_step()'s HTTP response).
+
+    Falls back to a simulated send when SMTP_HOST/SMTP_USERNAME/
+    SMTP_PASSWORD aren't all set, so the demo works without a real
+    mailbox. Uses SMTP_SSL (implicit TLS on connect) rather than
+    STARTTLS, matching one.com's mail setup (send.one.com:465)."""
+    if not (SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD):
+        return {
+            "sent": False, "simulated": True, "to": to_email,
+            "note": "SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD not set — simulated only",
+        }
+    if not to_email:
+        return {"sent": False, "simulated": False, "to": to_email,
+                "note": "No email on file for this employee — skipped."}
+
+    msg = MIMEMultipart()
+    msg["Subject"] = "Welcome to JOE & THE JUICE — set up your account"
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(
+        f"Hi {full_name},\n\n"
+        f"Welcome to JOE & THE JUICE! Your account has been created.\n\n"
+        f"Sign in at https://www.office.com using:\n"
+        f"  Username: {upn}\n"
+        f"  Temporary password: {temp_password}\n\n"
+        f"You'll be asked to choose your own password the first time you sign in.\n\n"
+        f"— SLAM (automated)",
+        "plain",
+    ))
+
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, [to_email], msg.as_string())
+        return {"sent": True, "simulated": False, "to": to_email}
+    except Exception as e:
+        return {"sent": False, "simulated": False, "to": to_email, "error": str(e)}
 
 
 def resolve_contact_channel(conn, employee_id):
@@ -737,6 +815,11 @@ def advance_step(event_id):
             work_email = (employee_for_access["company_email"] or employee_for_access["personal_email"]) if employee_for_access else None
             existing_entra_id = employee_for_access["entra_id"] if employee_for_access else None
             result = sync_to_entra(ev["employee_name"], work_email, ev["type"], existing_entra_id)
+            # Pop the temp password/UPN out immediately — everything from
+            # here on (the print below, response["entra_sync"]) must never
+            # see them. See send_welcome_email()'s docstring.
+            temp_password = result.pop("_temp_password", None)
+            new_upn = result.pop("_upn", None)
             if result.get("entra_id") and result["entra_id"] != existing_entra_id:
                 with db.get_lock():
                     conn.execute(
@@ -746,6 +829,11 @@ def advance_step(event_id):
                     conn.commit()
             response["entra_sync"] = result
             print(f"[entra-sync] {result}")
+
+            if temp_password:
+                email_result = send_welcome_email(work_email, ev["employee_name"], new_upn, temp_password)
+                response["welcome_email"] = email_result
+                print(f"[welcome-email] sent={email_result.get('sent')} simulated={email_result.get('simulated')} to={email_result.get('to')}")
 
     if next_step["system_key"] == "comms":
         if ev["employee_id"] is None:
