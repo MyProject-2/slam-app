@@ -145,6 +145,19 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(status, payload)
             return
 
+        if parsed.path == "/api/webhooks/bamboohr":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            timestamp = self.headers.get("X-BambooHR-Timestamp", "")
+            signature = self.headers.get("X-BambooHR-Signature", "")
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status, payload = api.handle_bamboohr_webhook(raw, timestamp, signature, body)
+            self._send_json(status, payload)
+            return
+
         if parsed.path == "/api/employees":
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b"{}"

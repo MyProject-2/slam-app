@@ -1,105 +1,156 @@
 """
-db.py — SQLite data layer for the SLAM (Starters, Leavers, And Movers) demo.
+db.py — Azure SQL Database data layer for the SLAM (Starters, Leavers, And
+Movers) demo, via Microsoft's mssql-python driver (talks the TDS protocol
+directly — no separate ODBC driver manager to install).
 
-Uses Python's built-in sqlite3 module — a real relational database file
-(slam.db) on disk, no external DB server or driver installation required.
+Moved off SQLite because Azure App Service Linux's persistent storage
+(/home) is a network-mounted share, and SQLite's file-locking model isn't
+reliable over network filesystems — Microsoft's own guidance for that
+situation is to use a managed database service instead. Unlike the
+Twilio/BambooHR/Entra/etc. integrations elsewhere in this app, there's no
+env-var-gated simulated fallback here: the database isn't an optional
+side effect, nothing works without one, so AZURE_SQL_SERVER/DATABASE/
+USER/PASSWORD are required, not optional.
 """
 
-import sqlite3
-import threading
 import os
+import threading
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "slam.db")
+from mssql_python import connect, IntegrityError  # noqa: F401 (IntegrityError re-exported for api.py)
+
+AZURE_SQL_SERVER = os.environ.get("AZURE_SQL_SERVER")
+AZURE_SQL_DATABASE = os.environ.get("AZURE_SQL_DATABASE")
+AZURE_SQL_USER = os.environ.get("AZURE_SQL_USER")
+AZURE_SQL_PASSWORD = os.environ.get("AZURE_SQL_PASSWORD")
 
 _lock = threading.Lock()
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-_conn.row_factory = sqlite3.Row
+
+# Every timestamp column is a plain ISO-8601 string (not a native DATETIME2),
+# matching api.py's now_iso() helper and its strptime() parsing elsewhere —
+# this avoids a datetime<->string conversion layer throughout the app.
+_ISO_DEFAULT = "DEFAULT (FORMAT(SYSUTCDATETIME(), 'yyyy-MM-ddTHH:mm:ss.fff') + 'Z')"
+
+
+class Row:
+    """Wraps an mssql-python result row together with its column names so
+    it behaves like sqlite3.Row: dict(row) and row["column"] both work,
+    matching every call site in api.py written against the old SQLite
+    layer. Built locally rather than relying on mssql-python's own row
+    type, whose dict/mapping support isn't documented."""
+    __slots__ = ("_data",)
+
+    def __init__(self, columns, values):
+        self._data = dict(zip(columns, values))
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self._data.values())[key]
+        return self._data[key]
+
+    def keys(self):
+        return self._data.keys()
+
+
+class _Cursor:
+    """Wraps mssql-python's raw cursor so fetchone()/fetchall() return Row
+    objects instead of its native row type."""
+    def __init__(self, raw_cursor):
+        self._raw = raw_cursor
+
+    def _columns(self):
+        return [col[0] for col in self._raw.description] if self._raw.description else []
+
+    def fetchone(self):
+        row = self._raw.fetchone()
+        return Row(self._columns(), row) if row is not None else None
+
+    def fetchall(self):
+        columns = self._columns()
+        return [Row(columns, row) for row in self._raw.fetchall()]
+
+
+class _Conn:
+    """Thin sqlite3-style convenience layer over mssql-python's Connection
+    — exposes conn.execute(sql, params) directly (mssql-python only offers
+    conn.cursor().execute(...)), so every call site in api.py written
+    against sqlite3.Connection.execute() keeps working unchanged."""
+    def __init__(self, raw_conn):
+        self._raw = raw_conn
+
+    def execute(self, sql, params=()):
+        cur = self._raw.cursor()
+        cur.execute(sql, params)
+        return _Cursor(cur)
+
+    def commit(self):
+        self._raw.commit()
+
+
+def _connection_string():
+    return (
+        f"Server=tcp:{AZURE_SQL_SERVER},1433;Database={AZURE_SQL_DATABASE};"
+        f"Uid={AZURE_SQL_USER};Pwd={AZURE_SQL_PASSWORD};"
+        "Encrypt=yes;TrustServerCertificate=no;"
+    )
+
+
+_conn = _Conn(connect(_connection_string()))
 
 
 def init_db():
     with _lock:
-        _conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS employees (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hris_id TEXT UNIQUE,              -- system-of-record ID; populated once the HRIS webhook lands
-                full_name TEXT NOT NULL,
-                country TEXT,                     -- ISO 3166-1 alpha-2, e.g. 'DK', 'GB' — drives country-specific GDPR/payroll rules
-                department TEXT,                  -- e.g. 'Operations', 'People & Culture'
-                personal_email TEXT,
-                personal_phone TEXT,
-                company_email TEXT,
-                company_phone TEXT,
-                bamboohr_id TEXT,                 -- BambooHR's own employee ID, set after the first successful Core HR sync
-                okta_id TEXT,                      -- Okta's own user ID, set after the first successful Access/IT sync
-                entra_id TEXT,                     -- Microsoft Entra ID's own user object ID, alternative Access/IT sync target
-                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticket_id TEXT NOT NULL,
-                type TEXT NOT NULL,               -- starter | mover | leaver
-                employee_name TEXT NOT NULL,
-                employee_id INTEGER REFERENCES employees(id),
-                status TEXT NOT NULL DEFAULT 'processing',  -- processing | complete
-                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS event_steps (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-                step_index INTEGER NOT NULL,
-                label TEXT NOT NULL,
-                system_key TEXT,                  -- which system this step touches, if any
-                is_gdpr_flag INTEGER NOT NULL DEFAULT 0,
-                is_welcome_message INTEGER NOT NULL DEFAULT 0,
-                done INTEGER NOT NULL DEFAULT 0,
-                done_at TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_steps_event ON event_steps(event_id);
-            """
-        )
-        # Existing databases predate the employees table/employee_id column;
-        # CREATE TABLE IF NOT EXISTS won't retrofit a column onto an events
-        # table that already exists, so add it by hand when missing. This
-        # must run before the employee_id index below, since that index
-        # creation would otherwise fail against a pre-existing table.
-        existing_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(events)")}
-        if "employee_id" not in existing_columns:
-            _conn.execute("ALTER TABLE events ADD COLUMN employee_id INTEGER REFERENCES employees(id)")
-        _conn.execute("CREATE INDEX IF NOT EXISTS idx_events_employee ON events(employee_id)")
-
-        # Same story for employees.country, added after the table first shipped.
-        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
-        if "country" not in existing_employee_columns:
-            _conn.execute("ALTER TABLE employees ADD COLUMN country TEXT")
-
-        # ...and for event_steps.is_welcome_message.
-        existing_step_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(event_steps)")}
-        if "is_welcome_message" not in existing_step_columns:
-            _conn.execute("ALTER TABLE event_steps ADD COLUMN is_welcome_message INTEGER NOT NULL DEFAULT 0")
-
-        # ...and for employees.bamboohr_id.
-        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
-        if "bamboohr_id" not in existing_employee_columns:
-            _conn.execute("ALTER TABLE employees ADD COLUMN bamboohr_id TEXT")
-
-        # ...and for employees.okta_id.
-        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
-        if "okta_id" not in existing_employee_columns:
-            _conn.execute("ALTER TABLE employees ADD COLUMN okta_id TEXT")
-
-        # ...and for employees.entra_id.
-        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
-        if "entra_id" not in existing_employee_columns:
-            _conn.execute("ALTER TABLE employees ADD COLUMN entra_id TEXT")
-
-        # ...and for employees.department.
-        existing_employee_columns = {row["name"] for row in _conn.execute("PRAGMA table_info(employees)")}
-        if "department" not in existing_employee_columns:
-            _conn.execute("ALTER TABLE employees ADD COLUMN department TEXT")
+        _conn.execute(f"""
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employees')
+            CREATE TABLE employees (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                hris_id NVARCHAR(100) UNIQUE,          -- system-of-record ID; populated once the HRIS webhook lands
+                full_name NVARCHAR(200) NOT NULL,
+                country NVARCHAR(10),                  -- ISO 3166-1 alpha-2, e.g. 'DK', 'GB'
+                department NVARCHAR(100),               -- e.g. 'Operations', 'People & Culture'
+                personal_email NVARCHAR(200),
+                personal_phone NVARCHAR(50),
+                company_email NVARCHAR(200),
+                company_phone NVARCHAR(50),
+                bamboohr_id NVARCHAR(50),               -- BambooHR's own employee ID
+                okta_id NVARCHAR(50),                   -- Okta's own user ID
+                entra_id NVARCHAR(50),                  -- Microsoft Entra ID's own user object ID
+                created_at NVARCHAR(30) NOT NULL {_ISO_DEFAULT}
+            )
+        """)
+        _conn.execute(f"""
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'events')
+            CREATE TABLE events (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                ticket_id NVARCHAR(50) NOT NULL,
+                type NVARCHAR(20) NOT NULL,             -- starter | mover | leaver
+                employee_name NVARCHAR(200) NOT NULL,
+                employee_id INT REFERENCES employees(id),
+                status NVARCHAR(20) NOT NULL DEFAULT 'processing',  -- processing | complete
+                created_at NVARCHAR(30) NOT NULL {_ISO_DEFAULT}
+            )
+        """)
+        _conn.execute(f"""
+            IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'event_steps')
+            CREATE TABLE event_steps (
+                id INT IDENTITY(1,1) PRIMARY KEY,
+                event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                step_index INT NOT NULL,
+                label NVARCHAR(200) NOT NULL,
+                system_key NVARCHAR(50),                -- which system this step touches, if any
+                is_gdpr_flag BIT NOT NULL DEFAULT 0,
+                is_welcome_message BIT NOT NULL DEFAULT 0,
+                done BIT NOT NULL DEFAULT 0,
+                done_at NVARCHAR(30)
+            )
+        """)
+        _conn.execute("""
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_steps_event')
+            CREATE INDEX idx_steps_event ON event_steps(event_id)
+        """)
+        _conn.execute("""
+            IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_events_employee')
+            CREATE INDEX idx_events_employee ON events(employee_id)
+        """)
         _conn.commit()
 
 

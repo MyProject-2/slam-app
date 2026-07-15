@@ -15,7 +15,6 @@ import os
 import re
 import secrets
 import smtplib
-import sqlite3
 import string
 import time
 import urllib.error
@@ -57,6 +56,12 @@ SNOWFLAKE_TABLE = os.environ.get("SNOWFLAKE_TABLE", "SLAM_EVENTS")
 # must be set for a real sync; otherwise it simulates instead of failing.
 BAMBOOHR_SUBDOMAIN = os.environ.get("BAMBOOHR_SUBDOMAIN")
 BAMBOOHR_API_KEY = os.environ.get("BAMBOOHR_API_KEY")
+
+# Per-webhook secret shown once in BambooHR under Account Settings >
+# Webhooks when the event-based webhook is created — distinct from
+# BAMBOOHR_API_KEY, used only to verify handle_bamboohr_webhook's inbound
+# signature (see verify_bamboohr_webhook_signature).
+BAMBOOHR_WEBHOOK_SECRET = os.environ.get("BAMBOOHR_WEBHOOK_SECRET")
 
 # Okta credentials for the Access/IT steps (see sync_to_okta). Both must
 # be set for a real sync; otherwise it simulates instead of failing.
@@ -575,8 +580,8 @@ def resolve_contact_channel(conn, employee_id):
         return None
 
     access_step = conn.execute(
-        "SELECT es.done FROM event_steps es JOIN events e ON es.event_id = e.id "
-        "WHERE e.employee_id = ? AND es.system_key = 'accessit' ORDER BY es.id DESC LIMIT 1",
+        "SELECT TOP 1 es.done FROM event_steps es JOIN events e ON es.event_id = e.id "
+        "WHERE e.employee_id = ? AND es.system_key = 'accessit' ORDER BY es.id DESC",
         (employee_id,),
     ).fetchone()
     access_provisioned = bool(access_step and access_step["done"])
@@ -593,10 +598,10 @@ def _insert_event(conn, event_type, employee_name, employee_id=None):
     ticket_id = make_ticket_id(event_type)
     cur = conn.execute(
         "INSERT INTO events (ticket_id, type, employee_name, employee_id, status, created_at) "
-        "VALUES (?, ?, ?, ?, 'processing', ?)",
+        "OUTPUT INSERTED.id VALUES (?, ?, ?, ?, 'processing', ?)",
         (ticket_id, event_type, employee_name, employee_id, now_iso()),
     )
-    event_id = cur.lastrowid
+    event_id = cur.fetchone()[0]
     for idx, step in enumerate(steps_meta):
         conn.execute(
             "INSERT INTO event_steps (event_id, step_index, label, system_key, is_gdpr_flag, is_welcome_message, done) "
@@ -611,7 +616,7 @@ def list_events():
     conn = db.get_conn()
     with db.get_lock():
         events = conn.execute(
-            "SELECT * FROM events ORDER BY id DESC LIMIT 50"
+            "SELECT TOP 50 * FROM events ORDER BY id DESC"
         ).fetchall()
         result = []
         for ev in events:
@@ -717,7 +722,7 @@ def advance_step(event_id):
             return 404, {"error": "Event not found"}
 
         next_step = conn.execute(
-            "SELECT * FROM event_steps WHERE event_id = ? AND done = 0 ORDER BY step_index LIMIT 1",
+            "SELECT TOP 1 * FROM event_steps WHERE event_id = ? AND done = 0 ORDER BY step_index",
             (event_id,),
         ).fetchone()
         if next_step is None:
@@ -872,24 +877,14 @@ def _find_employee(conn, hris_id=None, personal_email=None, company_email=None):
     return None
 
 
-def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
-    """Receives lifecycle events pushed from the HRIS (system of record)
-    instead of SLAM initiating them. Expected payload:
-        {
-          "event_type": "starter" | "mover" | "leaver",
-          "employee": {
-            "hris_id": "EMP-1234", "full_name": "...", "country": "DK",
-            "department": "Operations", "personal_email": "...",
-            "personal_phone": "...", "company_email": "...", "company_phone": "..."
-          }
-        }
-    """
-    if not verify_webhook_signature(raw_body, signature_header):
-        return 401, {"error": "Invalid or missing webhook signature"}
-
-    event_type = (body or {}).get("event_type")
-    employee = (body or {}).get("employee") or {}
-
+def _ingest_lifecycle_event(event_type: str, employee: dict):
+    """Shared core behind every lifecycle-event entry point — the generic
+    HRIS webhook (handle_hris_webhook), the BambooHR-originated webhook
+    (handle_bamboohr_webhook), and the demo simulate button
+    (simulate_hris_event) all normalize into this same `employee` shape
+    (hris_id, full_name, country, department, personal_email,
+    personal_phone, company_email, company_phone) and hand off here to
+    create/update the employees row and open a new ticket."""
     if event_type not in workflow.PIPELINES:
         return 400, {"error": f"Unknown event_type '{event_type}'. Use starter, mover, or leaver."}
 
@@ -914,11 +909,11 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
                 }
             cur = conn.execute(
                 "INSERT INTO employees (hris_id, full_name, country, department, personal_email, personal_phone, company_email, company_phone) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "OUTPUT INSERTED.id VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (hris_id, full_name, employee.get("country"), employee.get("department"), personal_email,
                  employee.get("personal_phone"), company_email, employee.get("company_phone")),
             )
-            employee_id = cur.lastrowid
+            employee_id = cur.fetchone()[0]
         else:
             if existing is None:
                 return 404, {
@@ -938,6 +933,124 @@ def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
         conn.commit()
 
     return 201, {"id": event_id, "ticket_id": ticket_id, "type": event_type, "employee_id": employee_id}
+
+
+def handle_hris_webhook(raw_body: bytes, signature_header: str, body: dict):
+    """Receives lifecycle events pushed from the HRIS (system of record)
+    instead of SLAM initiating them. Expected payload:
+        {
+          "event_type": "starter" | "mover" | "leaver",
+          "employee": {
+            "hris_id": "EMP-1234", "full_name": "...", "country": "DK",
+            "department": "Operations", "personal_email": "...",
+            "personal_phone": "...", "company_email": "...", "company_phone": "..."
+          }
+        }
+    """
+    if not verify_webhook_signature(raw_body, signature_header):
+        return 401, {"error": "Invalid or missing webhook signature"}
+
+    event_type = (body or {}).get("event_type")
+    employee = (body or {}).get("employee") or {}
+    return _ingest_lifecycle_event(event_type, employee)
+
+
+def verify_bamboohr_webhook_signature(raw_body: bytes, timestamp_header: str, signature_header: str) -> bool:
+    """Verifies BambooHR's own webhook signature scheme — distinct from
+    verify_webhook_signature's GitHub/Stripe-style 'sha256=<hex>' over the
+    body alone. BambooHR HMACs the raw body concatenated with the
+    X-BambooHR-Timestamp header value, using the per-webhook secret shown
+    once in Account Settings > Webhooks at creation time
+    (BAMBOOHR_WEBHOOK_SECRET) — not BAMBOOHR_API_KEY, which is a
+    different credential for a different direction of traffic."""
+    if not (timestamp_header and signature_header and BAMBOOHR_WEBHOOK_SECRET):
+        return False
+    expected = hmac.new(
+        BAMBOOHR_WEBHOOK_SECRET.encode("utf-8"),
+        raw_body + timestamp_header.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
+def _fetch_bamboohr_employee(bamboohr_employee_id: str) -> dict:
+    """Reads back an employee's profile fields from BambooHR's API — the
+    follow-up call handle_bamboohr_webhook needs because BambooHR's
+    event-based employee.created payload carries only the employeeId, no
+    actual field data. Reuses the same Basic-auth scheme as
+    sync_to_bamboohr."""
+    fields = "firstName,lastName,workEmail,homeEmail,mobilePhone,department,country"
+    url = f"https://{BAMBOOHR_SUBDOMAIN}.bamboohr.com/api/v1/employees/{bamboohr_employee_id}?fields={fields}"
+    auth = base64.b64encode(f"{BAMBOOHR_API_KEY}:x".encode("utf-8")).decode("ascii")
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Basic {auth}",
+        "Accept": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def handle_bamboohr_webhook(raw_body: bytes, timestamp_header: str, signature_header: str, body: dict):
+    """Receives BambooHR's own event-based webhook directly — BambooHR is
+    the trigger here instead of a separate upstream HRIS pushing to
+    handle_hris_webhook. Configured in BambooHR under Account Settings >
+    Webhooks as an Event-Based webhook, JSON encoding, subscribed to
+    employee.created, pointed at this endpoint's public URL.
+
+    employee.created's payload only carries {"data": {"companyId",
+    "employeeId"}} — no field data — so this reads the rest back via
+    _fetch_bamboohr_employee before handing off to the same
+    _ingest_lifecycle_event() core every other event source uses, always
+    as a "starter". Only employee.created is handled; BambooHR's
+    employee.updated/employee.deleted events aren't wired to mover/leaver
+    (not built yet)."""
+    if not verify_bamboohr_webhook_signature(raw_body, timestamp_header, signature_header):
+        return 401, {"error": "Invalid or missing BambooHR webhook signature"}
+
+    event_kind = (body or {}).get("type")
+    if event_kind != "employee.created":
+        return 200, {"ignored": True, "reason": f"Event type '{event_kind}' not handled — only employee.created is wired up."}
+
+    bamboohr_employee_id = ((body or {}).get("data") or {}).get("employeeId")
+    if not bamboohr_employee_id:
+        return 400, {"error": "Missing data.employeeId in BambooHR webhook payload"}
+
+    try:
+        record = _fetch_bamboohr_employee(bamboohr_employee_id)
+    except urllib.error.HTTPError as e:
+        return 502, {"error": f"Could not read employee back from BambooHR: {e.read().decode('utf-8', errors='replace')}"}
+    except Exception as e:
+        return 502, {"error": f"Could not read employee back from BambooHR: {e}"}
+
+    first = (record.get("firstName") or "").strip()
+    last = (record.get("lastName") or "").strip()
+    full_name = f"{first} {last}".strip() or None
+
+    employee = {
+        "hris_id": f"BAMBOO-{bamboohr_employee_id}",
+        "full_name": full_name,
+        "country": record.get("country") or None,
+        "department": record.get("department") or None,
+        "personal_email": record.get("homeEmail") or None,
+        "personal_phone": record.get("mobilePhone") or None,
+        "company_email": record.get("workEmail") or None,
+        "company_phone": None,
+    }
+
+    status, payload = _ingest_lifecycle_event("starter", employee)
+    if status == 201:
+        payload["bamboohr_id"] = bamboohr_employee_id
+        # This employee already exists in BambooHR — that's where the event
+        # came from — so record bamboohr_id right away. Otherwise the Core HR
+        # pipeline step would see existing_bamboohr_id=None and POST a
+        # duplicate record instead of updating this one.
+        with db.get_lock():
+            db.get_conn().execute(
+                "UPDATE employees SET bamboohr_id = ? WHERE id = ?",
+                (bamboohr_employee_id, payload["employee_id"]),
+            )
+            db.get_conn().commit()
+    return status, payload
 
 
 def _slugify_hris_id(name: str) -> str:
@@ -1004,13 +1117,14 @@ def create_employee(body):
     with db.get_lock():
         try:
             cur = conn.execute(
-                f"INSERT INTO employees ({', '.join(_EMPLOYEE_FIELDS)}) VALUES ({', '.join('?' * len(_EMPLOYEE_FIELDS))})",
+                f"INSERT INTO employees ({', '.join(_EMPLOYEE_FIELDS)}) OUTPUT INSERTED.id VALUES ({', '.join('?' * len(_EMPLOYEE_FIELDS))})",
                 values,
             )
-        except sqlite3.IntegrityError:
+            new_id = cur.fetchone()[0]
+        except db.IntegrityError:
             return 409, {"error": f"An employee with hris_id '{body.get('hris_id')}' already exists"}
         conn.commit()
-        row = conn.execute("SELECT * FROM employees WHERE id = ?", (cur.lastrowid,)).fetchone()
+        row = conn.execute("SELECT * FROM employees WHERE id = ?", (new_id,)).fetchone()
 
     return 201, {"employee": dict(row)}
 
@@ -1034,7 +1148,7 @@ def update_employee(employee_id, body):
                 f"UPDATE employees SET {', '.join(f + ' = ?' for f in _EMPLOYEE_FIELDS)} WHERE id = ?",
                 values + [employee_id],
             )
-        except sqlite3.IntegrityError:
+        except db.IntegrityError:
             return 409, {"error": f"An employee with hris_id '{body.get('hris_id')}' already exists"}
         conn.commit()
         row = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()

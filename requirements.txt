@@ -1,0 +1,5 @@
+# SLAM is otherwise dependency-free — everything else runs on Python's
+# standard library. mssql-python is the one exception: Python has no
+# built-in driver for Azure SQL Database's TDS wire protocol (unlike
+# sqlite3, which is stdlib), so this is required for db.py to connect.
+mssql-python
