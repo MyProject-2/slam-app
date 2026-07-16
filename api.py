@@ -1040,16 +1040,26 @@ def handle_bamboohr_webhook(raw_body: bytes, timestamp_header: str, signature_he
     status, payload = _ingest_lifecycle_event("starter", employee)
     if status == 201:
         payload["bamboohr_id"] = bamboohr_employee_id
-        # This employee already exists in BambooHR — that's where the event
-        # came from — so record bamboohr_id right away. Otherwise the Core HR
-        # pipeline step would see existing_bamboohr_id=None and POST a
-        # duplicate record instead of updating this one.
         with db.get_lock():
-            db.get_conn().execute(
+            conn = db.get_conn()
+            # This employee already exists in BambooHR — that's where the event
+            # came from — so record bamboohr_id right away. Otherwise the Core HR
+            # pipeline step would see existing_bamboohr_id=None and POST a
+            # duplicate record instead of updating this one.
+            conn.execute(
                 "UPDATE employees SET bamboohr_id = ? WHERE id = ?",
                 (bamboohr_employee_id, payload["employee_id"]),
             )
-            db.get_conn().commit()
+            # The "Core HR record created" step is auto-completed here — and
+            # only here, not for any other event source — because BambooHR
+            # itself is the origin of this ticket: the record this step exists
+            # to confirm was already created before SLAM ever heard about it.
+            # Every other step still requires a manual advance.
+            conn.execute(
+                "UPDATE event_steps SET done = 1, done_at = ? WHERE event_id = ? AND system_key = 'corehr'",
+                (now_iso(), payload["id"]),
+            )
+            conn.commit()
     return status, payload
 
 
