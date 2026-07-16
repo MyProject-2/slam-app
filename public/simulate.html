@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#F7C1D9">
+<title>SLAM — Simulate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@700&family=Roboto+Flex:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#00112C;
+    --ink-soft:#5C687C;
+    --paper:#FFFFFF;
+    --paper-soft:#F7F7F8;
+    --pink:#F7C1D9;
+    --pink-deep:#EE93BC;
+    --red:#E22D2D;
+    --line:#DBDEE2;
+    --mono: 'Roboto Condensed', 'Roboto Flex', Arial, sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); font-family:'Roboto Flex','Roboto',-apple-system,Arial,sans-serif; min-height:100%;}
+  body{padding-bottom:80px;}
+  ::selection{background:var(--pink); color:var(--ink);}
+
+  header.hero{padding:40px 24px 32px; border-bottom:1px solid var(--ink); background:var(--pink);}
+  .back-link{font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:var(--ink);
+    text-decoration:none; display:inline-flex; align-items:center; gap:6px; margin-bottom:18px;}
+  .back-link:hover{text-decoration:underline;}
+  .brand-mark{display:flex; align-items:center; gap:14px;}
+  .logo-badge{width:44px; height:44px; background:var(--ink); color:var(--pink); font-family:var(--mono); font-weight:700;
+    font-size:22px; display:flex; align-items:center; justify-content:center; border-radius:8px; flex-shrink:0;}
+  h1{font-family:var(--mono); font-size:clamp(32px,6vw,52px); font-weight:700; letter-spacing:-0.01em; text-transform:uppercase;}
+  .tagline{max-width:640px; margin-top:14px; font-size:15px; line-height:1.55; color:rgba(0,17,44,0.72);}
+
+  .section-label{padding:32px 24px 16px; font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
+    color:rgba(0,17,44,0.55); display:flex; align-items:center; gap:14px;}
+  .section-label::after{content:""; flex:1; height:1px; background:var(--line);}
+
+  .stations{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin:0 24px;}
+  .station{background:var(--paper); padding:28px 24px 26px; position:relative; display:flex; flex-direction:column; gap:14px;}
+  .station .num{font-family:var(--mono); font-size:12px; color:rgba(0,17,44,0.4);}
+  .station h3{font-size:26px; font-weight:700; text-transform:uppercase; letter-spacing:-0.01em; font-family:var(--mono);}
+  .station p{font-size:14px; line-height:1.5; color:var(--ink-soft); min-height:60px;}
+  .station input{
+    background:var(--paper-soft); border:1px solid var(--line); color:var(--ink); font-family:'Roboto Flex','Roboto',sans-serif;
+    font-size:13px; padding:9px 10px; border-radius:2px; outline:none;
+  }
+  .station input::placeholder{color:rgba(0,17,44,0.35);}
+  .station input:focus{border-color:var(--red);}
+  .fire-btn{margin-top:auto; align-self:flex-start; background:transparent; border:1px solid var(--ink); color:var(--ink);
+    font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; padding:11px 18px; cursor:pointer;
+    transition:all .15s ease; border-radius:2px;}
+  .fire-btn:hover{background:var(--red); border-color:var(--red); color:#fff;}
+  .fire-btn:active{transform:scale(0.97);}
+  .fire-btn:disabled{opacity:0.4; cursor:not-allowed;}
+  .station.starter{border-top:3px solid var(--red);}
+  .station.mover{border-top:3px solid var(--ink);}
+  .station.leaver{border-top:3px solid var(--ink-soft);}
+
+  .result{margin:20px 24px 0; font-family:var(--mono); font-size:13px; padding:14px 16px; border:1px dashed var(--line); color:rgba(0,17,44,0.5); min-height:20px;}
+  .result.ok{color:var(--ink); border-color:rgba(226,45,45,0.4); background:rgba(226,45,45,0.06); border-style:solid;}
+  .result a{color:var(--red);}
+
+  .note{margin:32px 24px 0; padding:20px; border:1px dashed var(--line); font-size:13px; line-height:1.6; color:var(--ink-soft);}
+  .note b{color:var(--ink);}
+  .note code{background:var(--paper-soft); padding:1px 6px; border-radius:2px; font-family:var(--mono); font-size:12px;}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <a class="back-link" href="/">&larr; Back to SLAM</a>
+  <div class="brand-mark">
+    <div class="logo-badge">S</div>
+    <h1>Simulate SLAM</h1>
+  </div>
+  <p class="tagline">Fire a lifecycle event as if it came from the HRIS — a demo/testing stand-in for a real HRIS webhook subscription, not something an end user would ever click in production.</p>
+</header>
+
+<div class="section-label">Fire a lifecycle event</div>
+
+<div class="stations">
+  <div class="station starter">
+    <div class="num">01</div>
+    <h3>Starter</h3>
+    <p>A new joiner signs their offer. Core HR record is created and every downstream system provisions automatically.</p>
+    <input type="text" id="nameStarter" placeholder="employee name (optional)">
+    <button class="fire-btn" onclick="fireTicket('starter')">Simulate new starter</button>
+  </div>
+  <div class="station mover">
+    <div class="num">02</div>
+    <h3>Mover</h3>
+    <p>An internal promotion or market transfer. Access, comp banding, and reporting lines update without a ticket to IT.</p>
+    <input type="text" id="nameMover" placeholder="employee name (optional)">
+    <button class="fire-btn" onclick="fireTicket('mover')">Simulate a mover</button>
+  </div>
+  <div class="station leaver">
+    <div class="num">03</div>
+    <h3>Leaver</h3>
+    <p>Last day confirmed. Access is revoked on schedule and data is retained per GDPR — nothing lingers, nothing breaks early.</p>
+    <input type="text" id="nameLeaver" placeholder="employee name (optional)">
+    <button class="fire-btn" onclick="fireTicket('leaver')">Simulate a leaver</button>
+  </div>
+</div>
+
+<div class="result" id="result">— fire an event above, then check the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a> to see it —</div>
+
+<div class="note">
+  <b>How this is wired:</b> the buttons above call <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit — including the duplicate-starter rejection and unknown-employee checks. Nothing advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step a ticket through its pipeline by hand.
+</div>
+
+<script>
+async function fireTicket(type){
+  const inputId = {starter:'nameStarter', mover:'nameMover', leaver:'nameLeaver'}[type];
+  const name = document.getElementById(inputId).value.trim();
+  const result = document.getElementById('result');
+  if(!name){
+    alert('Enter an employee name — the simulated HRIS webhook needs one to derive an HRIS ID.');
+    return;
+  }
+  const btns = document.querySelectorAll('.fire-btn');
+  btns.forEach(b=>b.disabled = true);
+  try{
+    const res = await fetch('/api/dev/simulate-hris', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({type, employee_name: name})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      result.className = 'result';
+      result.textContent = 'Could not fire event: ' + (data.error || res.status);
+    } else {
+      document.getElementById(inputId).value = '';
+      result.className = 'result ok';
+      result.innerHTML = `✓ Fired — ticket <b>${data.ticket_id}</b> created. View it on the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a>.`;
+    }
+  }catch(e){
+    result.className = 'result';
+    result.textContent = 'Could not reach the API. Is the server running?';
+  }finally{
+    btns.forEach(b=>b.disabled = false);
+  }
+}
+</script>
+
+</body>
+</html>

@@ -49,7 +49,11 @@
   .slam-key div:last-child{border-right:none;}
   .slam-key b{color:var(--red); font-size:12px;}
 
-  .conn-status{margin-top:24px; font-family:var(--mono); font-size:11.5px; color:rgba(0,17,44,0.55); display:flex; align-items:center;
+  /* Hidden from view (not deleted) — this connection-status readout is earmarked for a future
+     observability page rather than the homepage. The underlying poll()/setConn() logic that
+     drives the live ticket rail and systems grid stays fully active; only this visible dot+text
+     readout is suppressed. See project backlog. */
+  .conn-status{display:none; margin-top:24px; font-family:var(--mono); font-size:11.5px; color:rgba(0,17,44,0.55); align-items:center;
     gap:8px; position:relative; z-index:1;}
   .conn-dot{width:7px;height:7px;border-radius:50%; background:#B9BFC8;}
   .conn-dot.up{background:var(--red); box-shadow:0 0 6px var(--red);}
@@ -63,27 +67,6 @@
   .section-label{padding:40px 24px 20px; font-family:var(--mono); font-size:12px; letter-spacing:0.16em; text-transform:uppercase;
     color:rgba(0,17,44,0.55); display:flex; align-items:center; gap:14px;}
   .section-label::after{content:""; flex:1; height:1px; background:var(--line);}
-
-  .stations{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin:0 24px;}
-  .station{background:var(--paper); padding:28px 24px 26px; position:relative; display:flex; flex-direction:column; gap:14px;}
-  .station .num{font-family:var(--mono); font-size:12px; color:rgba(0,17,44,0.4);}
-  .station h3{font-size:26px; font-weight:700; text-transform:uppercase; letter-spacing:-0.01em; font-family:var(--mono);}
-  .station p{font-size:14px; line-height:1.5; color:var(--ink-soft); min-height:60px;}
-  .station input{
-    background:var(--paper-soft); border:1px solid var(--line); color:var(--ink); font-family:'Roboto Flex','Roboto',sans-serif;
-    font-size:13px; padding:9px 10px; border-radius:2px; outline:none;
-  }
-  .station input::placeholder{color:rgba(0,17,44,0.35);}
-  .station input:focus{border-color:var(--red);}
-  .fire-btn{margin-top:auto; align-self:flex-start; background:transparent; border:1px solid var(--ink); color:var(--ink);
-    font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase; padding:11px 18px; cursor:pointer;
-    transition:all .15s ease; border-radius:2px;}
-  .fire-btn:hover{background:var(--red); border-color:var(--red); color:#fff;}
-  .fire-btn:active{transform:scale(0.97);}
-  .fire-btn:disabled{opacity:0.4; cursor:not-allowed;}
-  .station.starter{border-top:3px solid var(--red);}
-  .station.mover{border-top:3px solid var(--ink);}
-  .station.leaver{border-top:3px solid var(--ink-soft);}
 
   .pipeline-wrap{margin:0 24px 40px; border:1px solid var(--line); background:var(--paper-soft);}
   .pipeline-head{padding:16px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;
@@ -155,33 +138,8 @@
 
   <div class="conn-status"><span class="conn-dot" id="connDot"></span><span id="connText">connecting to API…</span></div>
   <a class="manage-link" href="/manage.html">Manage active users &rarr;</a>
+  <a class="manage-link" href="/simulate.html">Simulate SLAM &rarr;</a>
 </header>
-
-<div class="section-label">Fire a lifecycle event</div>
-
-<div class="stations">
-  <div class="station starter">
-    <div class="num">01</div>
-    <h3>Starter</h3>
-    <p>A new joiner signs their offer. Core HR record is created and every downstream system provisions automatically.</p>
-    <input type="text" id="nameStarter" placeholder="employee name (optional)">
-    <button class="fire-btn" onclick="fireTicket('starter')">Simulate new starter</button>
-  </div>
-  <div class="station mover">
-    <div class="num">02</div>
-    <h3>Mover</h3>
-    <p>An internal promotion or market transfer. Access, comp banding, and reporting lines update without a ticket to IT.</p>
-    <input type="text" id="nameMover" placeholder="employee name (optional)">
-    <button class="fire-btn" onclick="fireTicket('mover')">Simulate a mover</button>
-  </div>
-  <div class="station leaver">
-    <div class="num">03</div>
-    <h3>Leaver</h3>
-    <p>Last day confirmed. Access is revoked on schedule and data is retained per GDPR — nothing lingers, nothing breaks early.</p>
-    <input type="text" id="nameLeaver" placeholder="employee name (optional)">
-    <button class="fire-btn" onclick="fireTicket('leaver')">Simulate a leaver</button>
-  </div>
-</div>
 
 <div class="section-label">System sync — single source of truth</div>
 <div class="systems"><div class="sys-grid" id="sysGrid"></div></div>
@@ -198,7 +156,7 @@
 </div>
 
 <div class="note">
-  <b>How this is wired:</b> the buttons above call <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit — including the duplicate-starter rejection and unknown-employee checks. Nothing advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step each ticket through its pipeline by hand via <code>POST /api/events/&lt;id&gt;/advance</code>. The page polls <code>GET /api/events</code> and <code>GET /api/systems</code> every second to render live state straight from the database — this browser tab and any other tab open to this server see the exact same data.
+  <b>How this is wired:</b> this page polls <code>GET /api/events</code> and <code>GET /api/systems</code> to render live state straight from the database — this browser tab and any other tab open to this server see the exact same data. To fire a new lifecycle event, head to <a href="/simulate.html" style="color:var(--red)">Simulate SLAM</a>; to step a ticket through its pipeline by hand, head to <a href="/manage.html" style="color:var(--red)">Manage active users</a>.
 </div>
 
 <script>
@@ -212,35 +170,6 @@ function fmtTime(iso){
 
 function tagClassFor(type){
   return {starter:'starter', mover:'mover', leaver:'leaver'}[type] || '';
-}
-
-async function fireTicket(type){
-  const inputId = {starter:'nameStarter', mover:'nameMover', leaver:'nameLeaver'}[type];
-  const name = document.getElementById(inputId).value.trim();
-  if(!name){
-    alert('Enter an employee name — the simulated HRIS webhook needs one to derive an HRIS ID.');
-    return;
-  }
-  const btns = document.querySelectorAll('.fire-btn');
-  btns.forEach(b=>b.disabled = true);
-  try{
-    const res = await fetch('/api/dev/simulate-hris', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({type, employee_name: name})
-    });
-    if(!res.ok){
-      const err = await res.json().catch(()=>({error:'Unknown error'}));
-      alert('Could not fire event: ' + (err.error || res.status));
-    } else {
-      document.getElementById(inputId).value = '';
-      await refreshEvents();
-    }
-  }catch(e){
-    alert('Could not reach the API. Is the server running?');
-  }finally{
-    btns.forEach(b=>b.disabled = false);
-  }
 }
 
 async function clearTickets(){
