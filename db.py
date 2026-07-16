@@ -15,8 +15,9 @@ USER/PASSWORD are required, not optional.
 
 import os
 import threading
+import time
 
-from mssql_python import connect, IntegrityError  # noqa: F401 (IntegrityError re-exported for api.py)
+from mssql_python import connect, IntegrityError, InterfaceError, OperationalError  # noqa: F401 (IntegrityError re-exported for api.py)
 
 AZURE_SQL_SERVER = os.environ.get("AZURE_SQL_SERVER")
 AZURE_SQL_DATABASE = os.environ.get("AZURE_SQL_DATABASE")
@@ -73,13 +74,37 @@ class _Conn:
     """Thin sqlite3-style convenience layer over mssql-python's Connection
     — exposes conn.execute(sql, params) directly (mssql-python only offers
     conn.cursor().execute(...)), so every call site in api.py written
-    against sqlite3.Connection.execute() keeps working unchanged."""
-    def __init__(self, raw_conn):
-        self._raw = raw_conn
+    against sqlite3.Connection.execute() keeps working unchanged.
+
+    Also reconnects transparently on a dropped connection: Azure SQL's
+    serverless tier auto-pauses after an hour idle (see AZURE_SQL_DATABASE's
+    "Auto-pause delay" setting), which kills this long-lived connection out
+    from under the app between requests — the whole point of a persistent
+    module-level connection is defeated if it can't recover from that.
+    Resuming from auto-pause isn't instant (observed taking up to ~15-20s),
+    so reconnecting retries a few times with a short delay rather than
+    giving up after one attempt."""
+    def __init__(self):
+        self._raw = self._reconnect()
+
+    def _reconnect(self, attempts=4, delay_seconds=5):
+        last_error = None
+        for _ in range(attempts):
+            try:
+                return connect(_connection_string())
+            except (OperationalError, InterfaceError) as e:
+                last_error = e
+                time.sleep(delay_seconds)
+        raise last_error
 
     def execute(self, sql, params=()):
-        cur = self._raw.cursor()
-        cur.execute(sql, params)
+        try:
+            cur = self._raw.cursor()
+            cur.execute(sql, params)
+        except (OperationalError, InterfaceError):
+            self._raw = self._reconnect()
+            cur = self._raw.cursor()
+            cur.execute(sql, params)
         return _Cursor(cur)
 
     def commit(self):
@@ -94,7 +119,7 @@ def _connection_string():
     )
 
 
-_conn = _Conn(connect(_connection_string()))
+_conn = _Conn()
 
 
 def init_db():
