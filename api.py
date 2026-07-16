@@ -569,6 +569,43 @@ def send_welcome_email(to_email: str, full_name: str, upn: str, temp_password: s
         return {"sent": False, "simulated": False, "to": to_email, "error": str(e)}
 
 
+def send_generic_welcome_email(to_email: str, full_name: str) -> dict:
+    """Sends a plain welcome note to the new hire's personal email — the
+    real action behind the starter pipeline's "Welcome message sent" step,
+    alongside the Twilio SMS (see send_sms). Distinct from
+    send_welcome_email(): this fires much earlier in the pipeline, before
+    Access has provisioned any account, so there's no sign-in info to
+    include yet — just a greeting. Falls back to a simulated send when
+    SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD aren't all set."""
+    if not (SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD):
+        return {
+            "sent": False, "simulated": True, "to": to_email,
+            "note": "SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD not set — simulated only",
+        }
+    if not to_email:
+        return {"sent": False, "simulated": False, "to": to_email,
+                "note": "No personal email on file for this employee — skipped."}
+
+    msg = MIMEMultipart()
+    msg["Subject"] = "Welcome to JOE & THE JUICE!"
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(
+        f"Hi {full_name},\n\n"
+        f"Welcome to JOE & THE JUICE! We're excited to have you join us — your onboarding is underway.\n\n"
+        f"— SLAM (automated)",
+        "plain",
+    ))
+
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, [to_email], msg.as_string())
+        return {"sent": True, "simulated": False, "to": to_email}
+    except Exception as e:
+        return {"sent": False, "simulated": False, "to": to_email, "error": str(e)}
+
+
 def resolve_contact_channel(conn, employee_id):
     """Personal contact info before Access is provisioned; company contact
     info after, if the employee has one — otherwise stays on personal
@@ -712,6 +749,7 @@ def list_active_events():
 def advance_step(event_id):
     conn = db.get_conn()
     contact = None
+    employee_for_welcome_email = None
     employee_for_sync = None
     employee_for_bamboohr = None
     employee_for_access = None
@@ -741,6 +779,9 @@ def advance_step(event_id):
 
         if next_step["is_welcome_message"] and ev["employee_id"] is not None:
             contact = resolve_contact_channel(conn, ev["employee_id"])
+            employee_for_welcome_email = conn.execute(
+                "SELECT personal_email FROM employees WHERE id = ?", (ev["employee_id"],)
+            ).fetchone()
 
         if next_step["system_key"] == "snowflake" and ev["employee_id"] is not None:
             employee_for_sync = conn.execute(
@@ -781,6 +822,12 @@ def advance_step(event_id):
             result["channel"] = contact["channel"]
             response["welcome_message"] = result
             print(f"[welcome-message] {result}")
+
+        if ev["employee_id"] is not None:
+            personal_email = employee_for_welcome_email["personal_email"] if employee_for_welcome_email else None
+            email_result = send_generic_welcome_email(personal_email, ev["employee_name"])
+            response["welcome_message_email"] = email_result
+            print(f"[welcome-message-email] sent={email_result.get('sent')} simulated={email_result.get('simulated')} to={email_result.get('to')}")
 
     if next_step["system_key"] == "snowflake":
         record = {
