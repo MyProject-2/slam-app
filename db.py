@@ -81,13 +81,15 @@ class _Conn:
     "Auto-pause delay" setting), which kills this long-lived connection out
     from under the app between requests — the whole point of a persistent
     module-level connection is defeated if it can't recover from that.
-    Resuming from auto-pause isn't instant (observed taking up to ~15-20s),
-    so reconnecting retries a few times with a short delay rather than
-    giving up after one attempt."""
+    Resuming from auto-pause isn't instant, and observed to stay flaky
+    (repeated "Communication link failure" errors) for a stretch after the
+    first successful reconnect too — a single retry-once wasn't enough, so
+    both connecting and querying retry in a loop with a short delay rather
+    than giving up after one attempt."""
     def __init__(self):
-        self._raw = self._reconnect()
+        self._raw = self._connect_with_retry()
 
-    def _reconnect(self, attempts=4, delay_seconds=5):
+    def _connect_with_retry(self, attempts=4, delay_seconds=5):
         last_error = None
         for _ in range(attempts):
             try:
@@ -97,15 +99,21 @@ class _Conn:
                 time.sleep(delay_seconds)
         raise last_error
 
-    def execute(self, sql, params=()):
-        try:
-            cur = self._raw.cursor()
-            cur.execute(sql, params)
-        except (OperationalError, InterfaceError):
-            self._raw = self._reconnect()
-            cur = self._raw.cursor()
-            cur.execute(sql, params)
-        return _Cursor(cur)
+    def execute(self, sql, params=(), attempts=5, delay_seconds=4):
+        last_error = None
+        for _ in range(attempts):
+            try:
+                cur = self._raw.cursor()
+                cur.execute(sql, params)
+                return _Cursor(cur)
+            except (OperationalError, InterfaceError) as e:
+                last_error = e
+                time.sleep(delay_seconds)
+                try:
+                    self._raw = connect(_connection_string())
+                except (OperationalError, InterfaceError):
+                    pass  # still not ready — next loop iteration retries anyway
+        raise last_error
 
     def commit(self):
         self._raw.commit()
