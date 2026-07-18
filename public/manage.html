@@ -43,9 +43,16 @@
     color:rgba(0,17,44,0.55); display:flex; align-items:center; gap:14px;}
   .section-label::after{content:""; flex:1; height:1px; background:var(--line);}
 
-  .queue{margin:0 24px; display:flex; flex-direction:column; gap:14px;}
+  .queue{margin:0 24px; display:flex; flex-direction:column; gap:20px;}
   .empty-state{font-family:var(--mono); font-size:13px; color:rgba(0,17,44,0.4); border:1px dashed var(--line); padding:32px;
     text-align:center;}
+
+  .person-group{display:flex; flex-direction:column; gap:10px;}
+  .person-header{display:flex; align-items:baseline; gap:10px; padding:0 2px;}
+  .person-header .name{font-size:17px; font-weight:700;}
+  .person-header .count{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--red); border:1px solid rgba(226,45,45,0.4); background:rgba(226,45,45,0.06); padding:2px 8px; border-radius:2px;}
+  .person-tickets{display:flex; flex-direction:column; gap:10px; padding-left:14px; border-left:2px solid var(--pink);}
 
   .user-card{border:1px solid var(--line); background:var(--paper-soft);}
   .user-top{padding:16px 18px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
@@ -139,19 +146,13 @@ async function advance(id){
   }
 }
 
-function render(events){
-  const queue = document.getElementById('queue');
-  if(events.length === 0){
-    queue.innerHTML = '<div class="empty-state">— no active users. Fire a lifecycle event from the homepage to see it here —</div>';
-    return;
-  }
-
-  queue.innerHTML = events.map(ev => `
+function userCardHtml(ev){
+  return `
     <div class="user-card">
       <div class="user-top">
         <div class="user-id">
           <span class="tag ${tagClassFor(ev.type)}">${ev.type}</span>
-          &nbsp; <b>${ev.employee_name}</b> <span class="user-name">(${ev.ticket_id})</span>
+          &nbsp; <span class="user-name">${ev.ticket_id}</span>
         </div>
       </div>
       <div class="user-body">
@@ -166,6 +167,43 @@ function render(events){
           <span class="next-label">next up: <b>${ev.next_step_label}</b></span>
           <button class="advance-btn" ${advancing.has(ev.id) ? 'disabled' : ''} onclick="advance(${ev.id})">Advance &rarr;</button>
         </div>
+      </div>
+    </div>
+  `;
+}
+
+function render(events){
+  const queue = document.getElementById('queue');
+  if(events.length === 0){
+    queue.innerHTML = '<div class="empty-state">— no active users. Fire a lifecycle event from the homepage to see it here —</div>';
+    return;
+  }
+
+  // Group tickets by employee — the same person can have more than one
+  // active ticket at once (e.g. a starter still in flight, then a mover
+  // fired on them before it finished). Tickets with no employee_id (the
+  // raw POST /api/events testing path, no employee linkage) each get
+  // their own single-ticket group rather than being merged together.
+  const groups = [];
+  const groupByKey = new Map();
+  events.forEach(ev => {
+    const key = ev.employee_id != null ? `emp-${ev.employee_id}` : `ticket-${ev.id}`;
+    if(!groupByKey.has(key)){
+      const group = {name: ev.employee_name, tickets: []};
+      groupByKey.set(key, group);
+      groups.push(group);
+    }
+    groupByKey.get(key).tickets.push(ev);
+  });
+
+  queue.innerHTML = groups.map(group => `
+    <div class="person-group">
+      <div class="person-header">
+        <span class="name">${group.name}</span>
+        ${group.tickets.length > 1 ? `<span class="count">${group.tickets.length} active tickets</span>` : ''}
+      </div>
+      <div class="person-tickets">
+        ${group.tickets.map(userCardHtml).join('')}
       </div>
     </div>
   `).join('');

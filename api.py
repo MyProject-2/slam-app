@@ -728,6 +728,7 @@ def list_active_events():
                 "id": ev["id"],
                 "ticket_id": ev["ticket_id"],
                 "type": ev["type"],
+                "employee_id": ev["employee_id"],
                 "employee_name": ev["employee_name"],
                 "created_at": ev["created_at"],
                 "steps": [
