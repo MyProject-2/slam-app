@@ -1196,6 +1196,32 @@ def simulate_mover_event(body):
     return 201, {"id": event_id, "ticket_id": ticket_id, "type": "mover", "employee_id": employee_id}
 
 
+def simulate_leaver_event(body):
+    """Backs the Simulate SLAM page's leaver flow — same pattern as
+    simulate_mover_event(): targets a real, already-selected employee_id
+    directly (picked via live search), no name-derived identity guessing.
+    Only opens a leaver ticket; does not delete the employee record —
+    a real HR system keeps a departed employee's record for compliance/
+    audit, it doesn't erase them (the existing DELETE /api/employees/<id>
+    is the separate, explicit way to actually remove a record, and it's
+    blocked while any events still reference that employee)."""
+    body = body or {}
+    employee_id = body.get("employee_id")
+    if not employee_id:
+        return 400, {"error": "employee_id is required"}
+
+    conn = db.get_conn()
+    with db.get_lock():
+        employee = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if employee is None:
+            return 404, {"error": "Employee not found"}
+
+        event_id, ticket_id = _insert_event(conn, "leaver", employee["full_name"], employee_id=employee_id)
+        conn.commit()
+
+    return 201, {"id": event_id, "ticket_id": ticket_id, "type": "leaver", "employee_id": employee_id}
+
+
 _EMPLOYEE_FIELDS = ("hris_id", "full_name", "country", "department", "personal_email", "personal_phone", "company_email", "company_phone")
 
 

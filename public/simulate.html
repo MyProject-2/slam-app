@@ -125,7 +125,7 @@
     <h3>Mover</h3>
     <p>An internal promotion or market transfer. Search for an existing employee, then set their new department.</p>
     <div class="search-wrap">
-      <input type="text" id="moverSearch" placeholder="search employee name…" autocomplete="off" oninput="onMoverSearch()">
+      <input type="text" id="moverSearch" placeholder="search employee name…" autocomplete="off">
       <div class="search-results" id="moverResults"></div>
     </div>
     <div class="selected-tag" id="moverSelectedTag"></div>
@@ -134,16 +134,20 @@
   <div class="station leaver">
     <div class="num">03</div>
     <h3>Leaver</h3>
-    <p>Last day confirmed. Access is revoked on schedule and data is retained per GDPR — nothing lingers, nothing breaks early.</p>
-    <input type="text" id="nameLeaver" placeholder="employee name (optional)">
-    <button class="fire-btn" onclick="fireTicket('leaver')">Simulate a leaver</button>
+    <p>Last day confirmed. Search for the departing employee — their record stays, a leaver ticket opens for them.</p>
+    <div class="search-wrap">
+      <input type="text" id="leaverSearch" placeholder="search employee name…" autocomplete="off">
+      <div class="search-results" id="leaverResults"></div>
+    </div>
+    <div class="selected-tag" id="leaverSelectedTag"></div>
+    <button class="fire-btn" id="leaverBtn" disabled onclick="fireLeaver()">Simulate a leaver</button>
   </div>
 </div>
 
 <div class="result" id="result">— fire an event above, then check the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a> to see it —</div>
 
 <div class="note">
-  <b>How this is wired:</b> Starter/Leaver call <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit. Mover works differently — it targets a real, already-existing employee (searched directly from the database) and calls <code>POST /api/dev/simulate-mover</code>, which updates their department and opens a new mover ticket for them right away. Nothing on any ticket advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step it through its pipeline by hand.
+  <b>How this is wired:</b> Starter calls <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit. Mover and Leaver work differently — they target a real, already-existing employee (searched directly from the database) rather than deriving a fake identity from typed text: Mover calls <code>POST /api/dev/simulate-mover</code> (updates their department, opens a mover ticket), Leaver calls <code>POST /api/dev/simulate-leaver</code> (opens a leaver ticket only — the employee record itself isn't deleted, same as a real HR system keeping departed employees' records). Nothing on any ticket advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step it through its pipeline by hand.
 </div>
 
 <div class="modal-overlay" id="moverModal">
@@ -168,6 +172,7 @@
 <script>
 let allEmployees = [];
 let selectedMoverEmployee = null;
+let selectedLeaverEmployee = null;
 
 async function loadEmployees(){
   try{
@@ -178,45 +183,63 @@ async function loadEmployees(){
 }
 loadEmployees();
 
-function onMoverSearch(){
-  selectedMoverEmployee = null;
-  document.getElementById('moverBtn').disabled = true;
-  document.getElementById('moverSelectedTag').textContent = '';
+// Shared search-as-you-type wiring for both the Mover and Leaver boxes —
+// each just supplies where its selection state/UI lives via onSelect/onClear.
+function setupEmployeeSearch(inputId, resultsId, tagId, btnId, onSelect, onClear){
+  const input = document.getElementById(inputId);
+  const resultsEl = document.getElementById(resultsId);
+  const tagEl = document.getElementById(tagId);
+  const btnEl = document.getElementById(btnId);
 
-  const query = document.getElementById('moverSearch').value.trim().toLowerCase();
-  const resultsEl = document.getElementById('moverResults');
-  if(!query){
-    resultsEl.classList.remove('open');
-    resultsEl.innerHTML = '';
-    return;
-  }
-  const matches = allEmployees.filter(e => e.full_name.toLowerCase().includes(query)).slice(0, 8);
-  if(matches.length === 0){
-    resultsEl.innerHTML = '<div class="search-empty">— no matching employees —</div>';
-  } else {
-    resultsEl.innerHTML = matches.map(e => `
-      <div class="search-result-item" onclick='selectMoverEmployee(${e.id})'>
-        <span>${e.full_name}</span>
-        <span class="dept">${e.department || 'no dept'}</span>
-      </div>
-    `).join('');
-  }
-  resultsEl.classList.add('open');
+  input.addEventListener('input', () => {
+    onClear();
+    tagEl.textContent = '';
+    btnEl.disabled = true;
+
+    const query = input.value.trim().toLowerCase();
+    if(!query){
+      resultsEl.classList.remove('open');
+      resultsEl.innerHTML = '';
+      return;
+    }
+    const matches = allEmployees.filter(e => e.full_name.toLowerCase().includes(query)).slice(0, 8);
+    if(matches.length === 0){
+      resultsEl.innerHTML = '<div class="search-empty">— no matching employees —</div>';
+    } else {
+      resultsEl.innerHTML = matches.map(e => `
+        <div class="search-result-item" data-id="${e.id}">
+          <span>${e.full_name}</span>
+          <span class="dept">${e.department || 'no dept'}</span>
+        </div>
+      `).join('');
+      resultsEl.querySelectorAll('.search-result-item').forEach(el => {
+        el.addEventListener('click', () => {
+          const emp = allEmployees.find(x => x.id === Number(el.dataset.id));
+          input.value = emp.full_name;
+          resultsEl.classList.remove('open');
+          tagEl.textContent = `selected: ${emp.full_name}`;
+          btnEl.disabled = false;
+          onSelect(emp);
+        });
+      });
+    }
+    resultsEl.classList.add('open');
+  });
+
+  document.addEventListener('click', (e) => {
+    if(!e.target.closest(`#${inputId}`) && !e.target.closest(`#${resultsId}`)){
+      resultsEl.classList.remove('open');
+    }
+  });
 }
 
-function selectMoverEmployee(id){
-  selectedMoverEmployee = allEmployees.find(e => e.id === id) || null;
-  document.getElementById('moverSearch').value = selectedMoverEmployee ? selectedMoverEmployee.full_name : '';
-  document.getElementById('moverResults').classList.remove('open');
-  document.getElementById('moverBtn').disabled = !selectedMoverEmployee;
-  document.getElementById('moverSelectedTag').textContent = selectedMoverEmployee ? `selected: ${selectedMoverEmployee.full_name}` : '';
-}
+setupEmployeeSearch('moverSearch', 'moverResults', 'moverSelectedTag', 'moverBtn',
+  (emp) => { selectedMoverEmployee = emp; },
+  () => { selectedMoverEmployee = null; });
 
-document.addEventListener('click', (e) => {
-  if(!e.target.closest('.search-wrap')){
-    document.getElementById('moverResults').classList.remove('open');
-  }
-});
+setupEmployeeSearch('leaverSearch', 'leaverResults', 'leaverSelectedTag', 'leaverBtn',
+  (emp) => { selectedLeaverEmployee = emp; },
+  () => { selectedLeaverEmployee = null; });
 
 function openMoverModal(){
   if(!selectedMoverEmployee) return;
@@ -263,16 +286,45 @@ async function submitMover(){
   }
 }
 
+async function fireLeaver(){
+  if(!selectedLeaverEmployee) return;
+  const result = document.getElementById('result');
+  const btn = document.getElementById('leaverBtn');
+  btn.disabled = true;
+  try{
+    const res = await fetch('/api/dev/simulate-leaver', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({employee_id: selectedLeaverEmployee.id})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      result.className = 'result';
+      result.textContent = 'Could not fire leaver event: ' + (data.error || res.status);
+      btn.disabled = false;
+    } else {
+      result.className = 'result ok';
+      result.innerHTML = `✓ Fired — ticket <b>${data.ticket_id}</b> created. View it on the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a>.`;
+      document.getElementById('leaverSearch').value = '';
+      selectedLeaverEmployee = null;
+      document.getElementById('leaverSelectedTag').textContent = '';
+    }
+  }catch(e){
+    result.className = 'result';
+    result.textContent = 'Could not reach the API. Is the server running?';
+    btn.disabled = false;
+  }
+}
+
 async function fireTicket(type){
-  const inputId = {starter:'nameStarter', leaver:'nameLeaver'}[type];
-  const name = document.getElementById(inputId).value.trim();
+  const name = document.getElementById('nameStarter').value.trim();
   const result = document.getElementById('result');
   if(!name){
     alert('Enter an employee name — the simulated HRIS webhook needs one to derive an HRIS ID.');
     return;
   }
-  const btns = document.querySelectorAll('.fire-btn');
-  btns.forEach(b=>b.disabled = true);
+  const btn = document.querySelector('.station.starter .fire-btn');
+  btn.disabled = true;
   try{
     const res = await fetch('/api/dev/simulate-hris', {
       method:'POST',
@@ -284,7 +336,7 @@ async function fireTicket(type){
       result.className = 'result';
       result.textContent = 'Could not fire event: ' + (data.error || res.status);
     } else {
-      document.getElementById(inputId).value = '';
+      document.getElementById('nameStarter').value = '';
       result.className = 'result ok';
       result.innerHTML = `✓ Fired — ticket <b>${data.ticket_id}</b> created. View it on the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a>.`;
     }
@@ -292,7 +344,7 @@ async function fireTicket(type){
     result.className = 'result';
     result.textContent = 'Could not reach the API. Is the server running?';
   }finally{
-    btns.forEach(b=>{ if(b.id !== 'moverBtn') b.disabled = false; });
+    btn.disabled = false;
   }
 }
 </script>
