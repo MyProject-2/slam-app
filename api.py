@@ -1151,6 +1151,37 @@ def simulate_hris_event(body):
     return handle_hris_webhook(raw_body, signature, payload)
 
 
+def simulate_mover_event(body):
+    """Backs the Simulate SLAM page's mover flow: unlike simulate_hris_event()
+    (which derives a fake identity from a typed name), this targets a real,
+    already-selected employee_id directly — no name-matching/dedup guessing
+    involved, since the employee was picked from a live search of actual
+    records. Updates that employee's department immediately and opens a new
+    mover ticket for them, bypassing the HRIS-webhook simulation path
+    entirely (there's no HRIS payload to simulate — this is SLAM-initiated,
+    like the Employees CRUD page)."""
+    body = body or {}
+    employee_id = body.get("employee_id")
+    new_department = (body.get("department") or "").strip()
+
+    if not employee_id:
+        return 400, {"error": "employee_id is required"}
+    if not new_department:
+        return 400, {"error": "department is required"}
+
+    conn = db.get_conn()
+    with db.get_lock():
+        employee = conn.execute("SELECT * FROM employees WHERE id = ?", (employee_id,)).fetchone()
+        if employee is None:
+            return 404, {"error": "Employee not found"}
+
+        conn.execute("UPDATE employees SET department = ? WHERE id = ?", (new_department, employee_id))
+        event_id, ticket_id = _insert_event(conn, "mover", employee["full_name"], employee_id=employee_id)
+        conn.commit()
+
+    return 201, {"id": event_id, "ticket_id": ticket_id, "type": "mover", "employee_id": employee_id}
+
+
 _EMPLOYEE_FIELDS = ("hris_id", "full_name", "country", "department", "personal_email", "personal_phone", "company_email", "company_phone")
 
 

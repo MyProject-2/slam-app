@@ -46,7 +46,7 @@
   .station p{font-size:14px; line-height:1.5; color:var(--ink-soft); min-height:60px;}
   .station input{
     background:var(--paper-soft); border:1px solid var(--line); color:var(--ink); font-family:'Roboto Flex','Roboto',sans-serif;
-    font-size:13px; padding:9px 10px; border-radius:2px; outline:none;
+    font-size:13px; padding:9px 10px; border-radius:2px; outline:none; width:100%;
   }
   .station input::placeholder{color:rgba(0,17,44,0.35);}
   .station input:focus{border-color:var(--red);}
@@ -59,6 +59,36 @@
   .station.starter{border-top:3px solid var(--red);}
   .station.mover{border-top:3px solid var(--ink);}
   .station.leaver{border-top:3px solid var(--ink-soft);}
+
+  .search-wrap{position:relative;}
+  .search-results{position:absolute; top:calc(100% + 2px); left:0; right:0; background:var(--paper); border:1px solid var(--ink);
+    max-height:220px; overflow-y:auto; z-index:10; display:none; box-shadow:0 6px 16px rgba(0,17,44,0.15);}
+  .search-results.open{display:block;}
+  .search-result-item{padding:10px 12px; font-size:13px; cursor:pointer; border-bottom:1px solid var(--line); display:flex;
+    justify-content:space-between; gap:8px; align-items:center;}
+  .search-result-item:last-child{border-bottom:none;}
+  .search-result-item:hover{background:var(--paper-soft);}
+  .search-result-item .dept{font-family:var(--mono); font-size:10.5px; color:rgba(0,17,44,0.45); text-transform:uppercase;}
+  .search-empty{padding:12px; font-family:var(--mono); font-size:12px; color:rgba(0,17,44,0.4);}
+  .selected-tag{font-family:var(--mono); font-size:11px; color:var(--red); min-height:14px;}
+
+  .modal-overlay{position:fixed; inset:0; background:rgba(0,17,44,0.55); display:none; align-items:center; justify-content:center;
+    z-index:100; padding:20px;}
+  .modal-overlay.open{display:flex;}
+  .modal{background:var(--paper); border:1px solid var(--ink); max-width:420px; width:100%; padding:24px;}
+  .modal h4{font-family:var(--mono); font-size:12px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(0,17,44,0.5); margin-bottom:6px;}
+  .modal .move-name{font-size:20px; font-weight:700; margin-bottom:18px;}
+  .modal .field{display:flex; flex-direction:column; gap:6px; margin-bottom:16px;}
+  .modal .field label{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(0,17,44,0.55);}
+  .modal .current-dept{background:var(--paper-soft); border:1px solid var(--line); padding:9px 10px; font-size:13px; border-radius:2px;}
+  .modal input{width:100%; background:var(--paper-soft); border:1px solid var(--line); color:var(--ink);
+    font-family:'Roboto Flex','Roboto',sans-serif; font-size:13px; padding:9px 10px; border-radius:2px; outline:none;}
+  .modal input:focus{border-color:var(--red);}
+  .modal-actions{display:flex; gap:10px; margin-top:20px;}
+  .modal-actions .fire-btn{margin-top:0;}
+  .btn-ghost{background:transparent; border:1px solid var(--line); color:var(--ink-soft); font-family:var(--mono); font-size:12px;
+    letter-spacing:0.08em; text-transform:uppercase; padding:11px 18px; cursor:pointer; border-radius:2px;}
+  .btn-ghost:hover{border-color:var(--ink); color:var(--ink);}
 
   .result{margin:20px 24px 0; font-family:var(--mono); font-size:13px; padding:14px 16px; border:1px dashed var(--line); color:rgba(0,17,44,0.5); min-height:20px;}
   .result.ok{color:var(--ink); border-color:rgba(226,45,45,0.4); background:rgba(226,45,45,0.06); border-style:solid;}
@@ -93,9 +123,13 @@
   <div class="station mover">
     <div class="num">02</div>
     <h3>Mover</h3>
-    <p>An internal promotion or market transfer. Access, comp banding, and reporting lines update without a ticket to IT.</p>
-    <input type="text" id="nameMover" placeholder="employee name (optional)">
-    <button class="fire-btn" onclick="fireTicket('mover')">Simulate a mover</button>
+    <p>An internal promotion or market transfer. Search for an existing employee, then set their new department.</p>
+    <div class="search-wrap">
+      <input type="text" id="moverSearch" placeholder="search employee name…" autocomplete="off" oninput="onMoverSearch()">
+      <div class="search-results" id="moverResults"></div>
+    </div>
+    <div class="selected-tag" id="moverSelectedTag"></div>
+    <button class="fire-btn" id="moverBtn" disabled onclick="openMoverModal()">Simulate a mover</button>
   </div>
   <div class="station leaver">
     <div class="num">03</div>
@@ -109,12 +143,128 @@
 <div class="result" id="result">— fire an event above, then check the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a> to see it —</div>
 
 <div class="note">
-  <b>How this is wired:</b> the buttons above call <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit — including the duplicate-starter rejection and unknown-employee checks. Nothing advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step a ticket through its pipeline by hand.
+  <b>How this is wired:</b> Starter/Leaver call <code>POST /api/dev/simulate-hris</code>, which builds a realistic HRIS webhook payload from the name you enter, signs it, and feeds it through the same <code>POST /api/webhooks/hris</code> logic a real HRIS integration would hit. Mover works differently — it targets a real, already-existing employee (searched directly from the database) and calls <code>POST /api/dev/simulate-mover</code>, which updates their department and opens a new mover ticket for them right away. Nothing on any ticket advances on its own — head to <a href="/manage.html" style="color:var(--red)">Manage active users</a> to step it through its pipeline by hand.
+</div>
+
+<div class="modal-overlay" id="moverModal">
+  <div class="modal">
+    <h4>Simulate a mover</h4>
+    <div class="move-name" id="moverModalName"></div>
+    <div class="field">
+      <label>Current department</label>
+      <div class="current-dept" id="moverCurrentDept"></div>
+    </div>
+    <div class="field">
+      <label for="moverNewDept">New department</label>
+      <input type="text" id="moverNewDept" placeholder="e.g. Operations">
+    </div>
+    <div class="modal-actions">
+      <button class="fire-btn" onclick="submitMover()">Move</button>
+      <button class="btn-ghost" onclick="closeMoverModal()">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <script>
+let allEmployees = [];
+let selectedMoverEmployee = null;
+
+async function loadEmployees(){
+  try{
+    const res = await fetch('/api/employees');
+    const data = await res.json();
+    allEmployees = data.employees || [];
+  }catch(e){ /* search just won't find anything if this fails */ }
+}
+loadEmployees();
+
+function onMoverSearch(){
+  selectedMoverEmployee = null;
+  document.getElementById('moverBtn').disabled = true;
+  document.getElementById('moverSelectedTag').textContent = '';
+
+  const query = document.getElementById('moverSearch').value.trim().toLowerCase();
+  const resultsEl = document.getElementById('moverResults');
+  if(!query){
+    resultsEl.classList.remove('open');
+    resultsEl.innerHTML = '';
+    return;
+  }
+  const matches = allEmployees.filter(e => e.full_name.toLowerCase().includes(query)).slice(0, 8);
+  if(matches.length === 0){
+    resultsEl.innerHTML = '<div class="search-empty">— no matching employees —</div>';
+  } else {
+    resultsEl.innerHTML = matches.map(e => `
+      <div class="search-result-item" onclick='selectMoverEmployee(${e.id})'>
+        <span>${e.full_name}</span>
+        <span class="dept">${e.department || 'no dept'}</span>
+      </div>
+    `).join('');
+  }
+  resultsEl.classList.add('open');
+}
+
+function selectMoverEmployee(id){
+  selectedMoverEmployee = allEmployees.find(e => e.id === id) || null;
+  document.getElementById('moverSearch').value = selectedMoverEmployee ? selectedMoverEmployee.full_name : '';
+  document.getElementById('moverResults').classList.remove('open');
+  document.getElementById('moverBtn').disabled = !selectedMoverEmployee;
+  document.getElementById('moverSelectedTag').textContent = selectedMoverEmployee ? `selected: ${selectedMoverEmployee.full_name}` : '';
+}
+
+document.addEventListener('click', (e) => {
+  if(!e.target.closest('.search-wrap')){
+    document.getElementById('moverResults').classList.remove('open');
+  }
+});
+
+function openMoverModal(){
+  if(!selectedMoverEmployee) return;
+  document.getElementById('moverModalName').textContent = selectedMoverEmployee.full_name;
+  document.getElementById('moverCurrentDept').textContent = selectedMoverEmployee.department || '— none —';
+  document.getElementById('moverNewDept').value = '';
+  document.getElementById('moverModal').classList.add('open');
+}
+
+function closeMoverModal(){
+  document.getElementById('moverModal').classList.remove('open');
+}
+
+async function submitMover(){
+  const newDept = document.getElementById('moverNewDept').value.trim();
+  if(!newDept){
+    alert('Enter a new department.');
+    return;
+  }
+  const result = document.getElementById('result');
+  try{
+    const res = await fetch('/api/dev/simulate-mover', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({employee_id: selectedMoverEmployee.id, department: newDept})
+    });
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok){
+      result.className = 'result';
+      result.textContent = 'Could not fire mover event: ' + (data.error || res.status);
+    } else {
+      result.className = 'result ok';
+      result.innerHTML = `✓ Fired — ticket <b>${data.ticket_id}</b> created, department updated. View it on the <a href="/">homepage</a> or <a href="/manage.html">Manage active users</a>.`;
+      closeMoverModal();
+      document.getElementById('moverSearch').value = '';
+      selectedMoverEmployee = null;
+      document.getElementById('moverBtn').disabled = true;
+      document.getElementById('moverSelectedTag').textContent = '';
+      loadEmployees();
+    }
+  }catch(e){
+    result.className = 'result';
+    result.textContent = 'Could not reach the API. Is the server running?';
+  }
+}
+
 async function fireTicket(type){
-  const inputId = {starter:'nameStarter', mover:'nameMover', leaver:'nameLeaver'}[type];
+  const inputId = {starter:'nameStarter', leaver:'nameLeaver'}[type];
   const name = document.getElementById(inputId).value.trim();
   const result = document.getElementById('result');
   if(!name){
@@ -142,7 +292,7 @@ async function fireTicket(type){
     result.className = 'result';
     result.textContent = 'Could not reach the API. Is the server running?';
   }finally{
-    btns.forEach(b=>b.disabled = false);
+    btns.forEach(b=>{ if(b.id !== 'moverBtn') b.disabled = false; });
   }
 }
 </script>

@@ -127,6 +127,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(status, payload)
             return
 
+        if parsed.path == "/api/dev/simulate-mover":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status, payload = api.simulate_mover_event(body)
+            self._send_json(status, payload)
+            return
+
         m = ADVANCE_RE.match(parsed.path)
         if m:
             status, payload = api.advance_step(int(m.group(1)))
