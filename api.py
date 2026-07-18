@@ -914,11 +914,25 @@ def verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
 def _find_employee(conn, hris_id=None, personal_email=None, company_email=None):
     """Looks up an existing employee by the most reliable identifier
     available, in order. This is the dedup check: if any of these match,
-    the employee already exists in SLAM."""
-    for column, value in (("hris_id", hris_id), ("personal_email", personal_email), ("company_email", company_email)):
-        if not value:
+    the employee already exists in SLAM.
+
+    Each email value is checked against *both* email columns, not just
+    its same-named one — different event sources put the same real
+    address in different columns (e.g. the BambooHR webhook derives
+    company_email from workEmail for a person another source already
+    recorded under personal_email), and checking same-column-only missed
+    that as a duplicate rather than an update (found via a real duplicate
+    "Barack Obama" record created this way)."""
+    if hris_id:
+        row = conn.execute("SELECT * FROM employees WHERE hris_id = ?", (hris_id,)).fetchone()
+        if row:
+            return row
+    for email in (personal_email, company_email):
+        if not email:
             continue
-        row = conn.execute(f"SELECT * FROM employees WHERE {column} = ?", (value,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM employees WHERE personal_email = ? OR company_email = ?", (email, email)
+        ).fetchone()
         if row:
             return row
     return None
