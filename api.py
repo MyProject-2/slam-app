@@ -32,6 +32,18 @@ import workflow
 # var in any environment that isn't just this local demo.
 HRIS_WEBHOOK_SECRET = os.environ.get("HRIS_WEBHOOK_SECRET", "demo-insecure-secret-change-me")
 
+# Signs the "demo login" cookie (see demo_login/verify_demo_login_cookie) —
+# a second, much weaker way into the deployed app alongside real Microsoft
+# SSO, offered on /login.html for anyone who can claim a @joejuice.com
+# email. Deliberately not a real identity check: nothing confirms the
+# person submitting the email actually owns it (no verification email
+# sent) — accepted as good enough for a portfolio demo, not a production
+# access control. Set via DEMO_LOGIN_SECRET outside local dev.
+DEMO_LOGIN_SECRET = os.environ.get("DEMO_LOGIN_SECRET", "demo-insecure-secret-change-me")
+DEMO_LOGIN_DOMAIN = "joejuice.com"
+DEMO_LOGIN_COOKIE_NAME = "slam_demo_login"
+DEMO_LOGIN_TTL_SECONDS = 60 * 60 * 12  # 12 hours
+
 # Twilio credentials for the welcome-message SMS step (see send_sms). All
 # three must be set for real sends; otherwise send_sms simulates instead
 # of failing, so the demo works without a Twilio account.
@@ -100,6 +112,46 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 SMTP_FROM = os.environ.get("SMTP_FROM") or SMTP_USERNAME
+
+
+def _sign_demo_login_cookie(email: str) -> str:
+    expiry = int(time.time()) + DEMO_LOGIN_TTL_SECONDS
+    payload = f"{email}:{expiry}"
+    sig = hmac.new(DEMO_LOGIN_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+
+def verify_demo_login_cookie(value: str) -> bool:
+    """Checked by server.py on every request once app-level auth is live
+    — a valid, unexpired, correctly-signed cookie is treated the same as
+    a real Microsoft SSO session. See DEMO_LOGIN_SECRET's module comment
+    for why this is intentionally a weak check."""
+    if not value:
+        return False
+    parts = value.split(":")
+    if len(parts) != 3:
+        return False
+    email, expiry, sig = parts
+    expected = hmac.new(DEMO_LOGIN_SECRET.encode("utf-8"), f"{email}:{expiry}".encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return False
+    try:
+        return int(expiry) >= int(time.time())
+    except ValueError:
+        return False
+
+
+def demo_login(body):
+    """Backs /login.html's 'Demo login' option. The only check is whether
+    the submitted email ends in @joejuice.com — self-reported, never
+    verified (no confirmation email, nothing proves ownership). Issues a
+    signed cookie server.py sets on the response; see verify_demo_login_cookie's
+    docstring for why this is an accepted, deliberate weak point rather
+    than a bug."""
+    email = ((body or {}).get("email") or "").strip().lower()
+    if not email.endswith(f"@{DEMO_LOGIN_DOMAIN}"):
+        return 403, {"error": f"Only @{DEMO_LOGIN_DOMAIN} email addresses can use demo login."}
+    return 200, {"ok": True, "cookie_value": _sign_demo_login_cookie(email), "max_age": DEMO_LOGIN_TTL_SECONDS}
 
 
 def now_iso():

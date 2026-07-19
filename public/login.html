@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#F7C1D9">
+<title>SLAM — Sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@700&family=Roboto+Flex:opsz,wght@8..144,400;8..144,500;8..144,600;8..144,700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#00112C;
+    --ink-soft:#5C687C;
+    --paper:#FFFFFF;
+    --paper-soft:#F7F7F8;
+    --pink:#F7C1D9;
+    --pink-deep:#EE93BC;
+    --red:#E22D2D;
+    --line:#DBDEE2;
+    --mono: 'Roboto Condensed', 'Roboto Flex', Arial, sans-serif;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); font-family:'Roboto Flex','Roboto',-apple-system,Arial,sans-serif;
+    min-height:100%; display:flex; align-items:center; justify-content:center;}
+  body{padding:24px;}
+
+  .card{width:100%; max-width:420px; border:1px solid var(--ink); background:var(--paper);}
+  .card-head{padding:32px 28px 24px; background:var(--pink); border-bottom:1px solid var(--ink);}
+  .brand-mark{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
+  .logo-badge{width:40px; height:40px; background:var(--ink); color:var(--pink); font-family:var(--mono); font-weight:700;
+    font-size:20px; display:flex; align-items:center; justify-content:center; border-radius:8px; flex-shrink:0;}
+  h1{font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:-0.01em; text-transform:uppercase;}
+  .tagline{font-size:13.5px; line-height:1.5; color:rgba(0,17,44,0.72);}
+
+  .card-body{padding:28px;}
+  .ms-btn{width:100%; display:flex; align-items:center; justify-content:center; gap:10px; background:var(--ink); color:#fff;
+    border:1px solid var(--ink); font-family:'Roboto Flex',sans-serif; font-size:14px; font-weight:600; padding:13px 16px;
+    cursor:pointer; border-radius:2px; text-decoration:none; transition:all .15s ease;}
+  .ms-btn:hover{background:var(--red); border-color:var(--red);}
+  .ms-btn svg{flex-shrink:0;}
+
+  .divider{display:flex; align-items:center; gap:12px; margin:22px 0; font-family:var(--mono); font-size:11px;
+    letter-spacing:0.1em; text-transform:uppercase; color:rgba(0,17,44,0.4);}
+  .divider::before, .divider::after{content:""; flex:1; height:1px; background:var(--line);}
+
+  .field{display:flex; flex-direction:column; gap:6px; margin-bottom:14px;}
+  .field label{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:rgba(0,17,44,0.55);}
+  .field input{background:var(--paper-soft); border:1px solid var(--line); color:var(--ink); font-family:'Roboto Flex',sans-serif;
+    font-size:13px; padding:10px 11px; border-radius:2px; outline:none;}
+  .field input:focus{border-color:var(--red);}
+  .demo-btn{width:100%; background:transparent; border:1px solid var(--ink); color:var(--ink); font-family:var(--mono);
+    font-size:12px; letter-spacing:0.08em; text-transform:uppercase; padding:12px 16px; cursor:pointer; border-radius:2px;
+    transition:all .15s ease;}
+  .demo-btn:hover{background:var(--ink); color:var(--pink);}
+  .demo-btn:disabled{opacity:0.4; cursor:not-allowed;}
+
+  .error{font-family:var(--mono); font-size:12px; color:var(--red); min-height:16px; margin-top:10px;}
+  .note{margin-top:20px; font-size:12px; line-height:1.5; color:rgba(0,17,44,0.5);}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="card-head">
+    <div class="brand-mark">
+      <div class="logo-badge">S</div>
+      <h1>SLAM</h1>
+    </div>
+    <p class="tagline">Starters, Leavers, And Movers — sign in to view the live demo.</p>
+  </div>
+  <div class="card-body">
+    <a class="ms-btn" href="/.auth/login/aad?post_login_redirect_uri=/">
+      <svg width="18" height="18" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      Sign in with Microsoft
+    </a>
+
+    <div class="divider">or</div>
+
+    <div class="field">
+      <label for="demoEmail">Demo login — @joejuice.com email</label>
+      <input type="email" id="demoEmail" placeholder="you@joejuice.com" autocomplete="email">
+    </div>
+    <button class="demo-btn" id="demoBtn" onclick="tryDemoLogin()">Continue</button>
+    <div class="error" id="demoError"></div>
+
+    <p class="note">Demo login only checks that the address ends in <code>@joejuice.com</code> — it isn't verified. It's a lightweight second door for reviewers, not a real identity check.</p>
+  </div>
+</div>
+
+<script>
+async function tryDemoLogin(){
+  const email = document.getElementById('demoEmail').value.trim();
+  const errorEl = document.getElementById('demoError');
+  const btn = document.getElementById('demoBtn');
+  errorEl.textContent = '';
+  if(!email){
+    errorEl.textContent = 'Enter an email address.';
+    return;
+  }
+  btn.disabled = true;
+  try{
+    const res = await fetch('/api/demo-login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email})
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok){
+      errorEl.textContent = data.error || 'Could not log in.';
+      btn.disabled = false;
+      return;
+    }
+    window.location.href = '/';
+  }catch(e){
+    errorEl.textContent = 'Could not reach the server.';
+    btn.disabled = false;
+  }
+}
+
+document.getElementById('demoEmail').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') tryDemoLogin();
+});
+</script>
+
+</body>
+</html>

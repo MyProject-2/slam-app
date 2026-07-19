@@ -12,6 +12,7 @@ Then open:
     http://localhost:8000
 """
 
+import http.cookies
 import json
 import mimetypes
 import os
@@ -32,10 +33,38 @@ PORT = int(os.environ.get("PORT", 8000))
 ADVANCE_RE = re.compile(r"^/api/events/(\d+)/advance$")
 EMPLOYEE_RE = re.compile(r"^/api/employees/(\d+)$")
 
+# Only enforce the app-level login gate when actually running on Azure App
+# Service (which always sets this) — local dev (`python server.py`) stays
+# open, same as it's always been, since Easy Auth doesn't exist locally
+# to have redirected anyone there in the first place.
+ENFORCE_AUTH = bool(os.environ.get("WEBSITE_SITE_NAME"))
+
+# Reachable without being logged in: the login page itself, the demo-login
+# endpoint it calls, and the two real webhook receivers (BambooHR/HRIS),
+# which authenticate their callers via their own signature checks instead
+# — a real HRIS/BambooHR obviously can't complete a browser SSO flow.
+PUBLIC_PATHS = {"/login.html", "/api/demo-login", "/api/webhooks/hris", "/api/webhooks/bamboohr"}
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep console quiet; comment out to debug
+
+    def _is_authenticated(self):
+        # Real Microsoft SSO: when Easy Auth's own global enforcement is
+        # off (see authsettingsV2's globalValidation.requireAuthentication),
+        # it still validates and injects this header for anyone who
+        # already has a valid session from going through /.auth/login/aad
+        # — and the App Service platform strips any client-supplied copy
+        # of this header before adding its own, so it can't be spoofed by
+        # a request from outside Azure's own front end.
+        if self.headers.get("X-MS-CLIENT-PRINCIPAL-NAME"):
+            return True
+        # Demo login: a signed cookie from POST /api/demo-login.
+        cookies = http.cookies.SimpleCookie()
+        cookies.load(self.headers.get("Cookie", ""))
+        demo_cookie = cookies.get(api.DEMO_LOGIN_COOKIE_NAME)
+        return bool(demo_cookie and api.verify_demo_login_cookie(demo_cookie.value))
 
     def _send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -61,6 +90,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if ENFORCE_AUTH and path not in PUBLIC_PATHS and not self._is_authenticated():
+            self.send_response(302)
+            self.send_header("Location", "/login.html")
+            self.end_headers()
+            return
 
         if path == "/api/events":
             status, payload = api.list_events()
@@ -105,6 +140,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+
+        if parsed.path == "/api/demo-login":
+            length = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                body = {}
+            status, payload = api.demo_login(body)
+            if status != 200:
+                self._send_json(status, payload)
+                return
+            cookie_value = payload.pop("cookie_value")
+            max_age = payload.pop("max_age")
+            secure_flag = "; Secure" if ENFORCE_AUTH else ""
+            body_bytes = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body_bytes)))
+            self.send_header(
+                "Set-Cookie",
+                f"{api.DEMO_LOGIN_COOKIE_NAME}={cookie_value}; Path=/; Max-Age={max_age}; HttpOnly{secure_flag}; SameSite=Lax",
+            )
+            self.end_headers()
+            self.wfile.write(body_bytes)
+            return
+
+        if ENFORCE_AUTH and parsed.path not in PUBLIC_PATHS and not self._is_authenticated():
+            self._send_json(401, {"error": "Not authenticated"})
+            return
+
         if parsed.path == "/api/events":
             length = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(length) if length else b"{}"
@@ -195,6 +261,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         parsed = urlparse(self.path)
+        if ENFORCE_AUTH and parsed.path not in PUBLIC_PATHS and not self._is_authenticated():
+            self._send_json(401, {"error": "Not authenticated"})
+            return
         m = EMPLOYEE_RE.match(parsed.path)
         if m:
             length = int(self.headers.get("Content-Length", 0))
@@ -210,6 +279,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
+        if ENFORCE_AUTH and parsed.path not in PUBLIC_PATHS and not self._is_authenticated():
+            self._send_json(401, {"error": "Not authenticated"})
+            return
         if parsed.path == "/api/events":
             status, payload = api.clear_events()
             self._send_json(status, payload)
