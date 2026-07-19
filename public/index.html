@@ -26,26 +26,26 @@
   body{padding-bottom:80px;}
   ::selection{background:var(--pink); color:var(--ink);}
 
-  header.hero{padding:32px 24px 26px; border-bottom:1px solid var(--ink); position:relative; overflow:hidden; background:var(--pink);}
+  header.hero{padding:20px 24px 16px; border-bottom:1px solid var(--ink); position:relative; overflow:hidden; background:var(--pink);}
   header.hero::before{content:""; position:absolute; top:-40%; right:-10%; width:520px; height:520px; border-radius:50%;
     background:radial-gradient(circle at 30% 30%, var(--paper), transparent 70%); opacity:0.35; filter:blur(10px);}
   .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:var(--red);
-    display:flex; align-items:center; gap:8px; margin-bottom:12px; position:relative; z-index:1;}
+    display:flex; align-items:center; gap:8px; margin-bottom:8px; position:relative; z-index:1;}
   .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--red); box-shadow:0 0 10px var(--red); animation:pulse 1.8s infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
 
-  .brand-mark{display:flex; align-items:center; gap:12px; position:relative; z-index:1;}
-  .logo-badge{width:clamp(32px,5vw,48px); height:clamp(32px,5vw,48px); background:var(--ink); color:var(--pink);
-    font-family:var(--mono); font-weight:700; font-size:clamp(16px,2.5vw,24px); display:flex; align-items:center;
+  .brand-mark{display:flex; align-items:center; gap:10px; position:relative; z-index:1;}
+  .logo-badge{width:clamp(26px,4vw,36px); height:clamp(26px,4vw,36px); background:var(--ink); color:var(--pink);
+    font-family:var(--mono); font-weight:700; font-size:clamp(13px,2vw,18px); display:flex; align-items:center;
     justify-content:center; border-radius:8px; flex-shrink:0;}
-  h1.slam-logo{font-family:var(--mono); font-size:clamp(34px, 7vw, 68px); line-height:0.85; font-weight:700; letter-spacing:-0.02em;
+  h1.slam-logo{font-family:var(--mono); font-size:clamp(24px, 4.5vw, 40px); line-height:0.85; font-weight:700; letter-spacing:-0.02em;
     text-transform:uppercase; color:var(--ink);}
   h1.slam-logo span{color:var(--red);}
-  .tagline{max-width:600px; margin-top:14px; font-size:14px; line-height:1.5; color:rgba(0,17,44,0.72); position:relative; z-index:1;}
+  .tagline{max-width:600px; margin-top:8px; font-size:13px; line-height:1.45; color:rgba(0,17,44,0.72); position:relative; z-index:1;}
   .tagline b{color:var(--ink); font-weight:600;}
-  .slam-key{margin-top:20px; display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--ink); border-radius:2px; overflow:hidden;
+  .slam-key{margin-top:12px; display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--ink); border-radius:2px; overflow:hidden;
     width:fit-content; position:relative; z-index:1; background:var(--paper);}
-  .slam-key div{padding:8px 14px; font-family:var(--mono); font-size:11px; letter-spacing:0.05em; border-right:1px solid var(--ink); white-space:nowrap;}
+  .slam-key div{padding:5px 11px; font-family:var(--mono); font-size:10.5px; letter-spacing:0.05em; border-right:1px solid var(--ink); white-space:nowrap;}
   .slam-key div:last-child{border-right:none;}
   .slam-key b{color:var(--red); font-size:12px;}
 
@@ -59,7 +59,7 @@
   .conn-dot.up{background:var(--red); box-shadow:0 0 6px var(--red);}
   .conn-dot.down{background:var(--down); box-shadow:0 0 6px var(--down);}
 
-  .manage-link{margin-top:16px; font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase;
+  .manage-link{margin-top:10px; font-family:var(--mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase;
     color:var(--ink); text-decoration:none; display:flex; width:fit-content; align-items:center; gap:6px; position:relative; z-index:1;
     border-bottom:1px solid var(--ink); padding-bottom:2px;}
   .manage-link:hover{color:var(--red); border-color:var(--red);}
