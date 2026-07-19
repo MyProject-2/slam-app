@@ -717,6 +717,7 @@ def list_events():
                 "id": ev["id"],
                 "ticket_id": ev["ticket_id"],
                 "type": ev["type"],
+                "employee_id": ev["employee_id"],
                 "employee_name": ev["employee_name"],
                 "status": ev["status"],
                 "created_at": ev["created_at"],

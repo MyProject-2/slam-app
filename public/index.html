@@ -77,6 +77,13 @@
   .tickets{padding:18px 20px; display:flex; flex-direction:column; gap:14px; min-height:110px;}
   .empty-state{font-family:var(--mono); font-size:13px; color:rgba(0,17,44,0.35); display:flex; align-items:center; gap:10px; padding:20px 0;}
 
+  .person-group{display:flex; flex-direction:column; gap:10px;}
+  .person-header{display:flex; align-items:baseline; gap:10px; padding:0 2px;}
+  .person-header .name{font-size:16px; font-weight:700;}
+  .person-header .count{font-family:var(--mono); font-size:11px; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--red); border:1px solid rgba(226,45,45,0.4); background:rgba(226,45,45,0.06); padding:2px 8px; border-radius:2px;}
+  .person-tickets{display:flex; flex-direction:column; gap:14px; padding-left:14px; border-left:2px solid var(--pink);}
+
   .ticket{border:1px solid var(--line); background:var(--paper); padding:16px 18px;}
   .ticket-top{display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:12px; flex-wrap:wrap;}
   .ticket-title{font-family:var(--mono); font-size:13px; letter-spacing:0.04em;}
@@ -190,6 +197,33 @@ function renderSystems(systems){
   `).join('');
 }
 
+function ticketHtml(ev){
+  const doneCount = ev.steps.filter(s=>s.done).length;
+  const allDone = doneCount === ev.steps.length;
+  return `
+    <div class="ticket">
+      <div class="ticket-top">
+        <div class="ticket-title">
+          <span class="tag ${tagClassFor(ev.type)}">${ev.type}</span>
+          &nbsp; <span class="ticket-name">${ev.ticket_id}</span>
+        </div>
+        <div class="ticket-time">${fmtTime(ev.created_at)}</div>
+      </div>
+      <div class="steps">
+        ${ev.steps.map(s => `
+          <div class="step ${s.done ? 'done' : ''} ${s.gdpr ? 'flag' : ''} ${s.welcome_message ? 'welcome' : ''}">
+            <span class="box"></span>${s.label}
+          </div>
+        `).join('')}
+      </div>
+      <div class="ticket-footer">
+        <span>routing through ${ev.steps.length} systems</span>
+        <span class="sot">${allDone ? '✓ single source of truth updated' : `— syncing (${doneCount}/${ev.steps.length}) —`}</span>
+      </div>
+    </div>
+  `;
+}
+
 function renderEvents(events){
   const rail = document.getElementById('ticketRail');
   document.getElementById('rail-count').textContent =
@@ -200,32 +234,33 @@ function renderEvents(events){
     return;
   }
 
-  rail.innerHTML = events.map(ev => {
-    const doneCount = ev.steps.filter(s=>s.done).length;
-    const allDone = doneCount === ev.steps.length;
-    return `
-      <div class="ticket">
-        <div class="ticket-top">
-          <div class="ticket-title">
-            <span class="tag ${tagClassFor(ev.type)}">${ev.type}</span>
-            &nbsp; <b>${ev.employee_name}</b> <span class="ticket-name">(${ev.ticket_id})</span>
-          </div>
-          <div class="ticket-time">${fmtTime(ev.created_at)}</div>
-        </div>
-        <div class="steps">
-          ${ev.steps.map(s => `
-            <div class="step ${s.done ? 'done' : ''} ${s.gdpr ? 'flag' : ''} ${s.welcome_message ? 'welcome' : ''}">
-              <span class="box"></span>${s.label}
-            </div>
-          `).join('')}
-        </div>
-        <div class="ticket-footer">
-          <span>routing through ${ev.steps.length} systems</span>
-          <span class="sot">${allDone ? '✓ single source of truth updated' : `— syncing (${doneCount}/${ev.steps.length}) —`}</span>
-        </div>
+  // Group tickets by employee — the same person can have more than one
+  // ticket at once (e.g. a starter still in flight, then a mover fired
+  // on them before it finished). Tickets with no employee_id (the raw
+  // POST /api/events testing path) each get their own group.
+  const groups = [];
+  const groupByKey = new Map();
+  events.forEach(ev => {
+    const key = ev.employee_id != null ? `emp-${ev.employee_id}` : `ticket-${ev.id}`;
+    if(!groupByKey.has(key)){
+      const group = {name: ev.employee_name, tickets: []};
+      groupByKey.set(key, group);
+      groups.push(group);
+    }
+    groupByKey.get(key).tickets.push(ev);
+  });
+
+  rail.innerHTML = groups.map(group => `
+    <div class="person-group">
+      <div class="person-header">
+        <span class="name">${group.name}</span>
+        ${group.tickets.length > 1 ? `<span class="count">${group.tickets.length} tickets</span>` : ''}
       </div>
-    `;
-  }).join('');
+      <div class="person-tickets">
+        ${group.tickets.map(ticketHtml).join('')}
+      </div>
+    </div>
+  `).join('');
 }
 
 async function refreshEvents(){
