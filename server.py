@@ -18,6 +18,7 @@ import mimetypes
 import os
 import posixpath
 import re
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -44,6 +45,24 @@ ENFORCE_AUTH = bool(os.environ.get("WEBSITE_SITE_NAME"))
 # which authenticate their callers via their own signature checks instead
 # — a real HRIS/BambooHR obviously can't complete a browser SSO flow.
 PUBLIC_PATHS = {"/login.html", "/api/demo-login", "/api/webhooks/hris", "/api/webhooks/bamboohr"}
+
+
+def _warm_db():
+    """Fired in the background when the homepage loads, so a database that
+    dropped from Azure SQL's free-tier auto-pause starts reconnecting while
+    the browser is still downloading/parsing the page — by the time its JS
+    fires the first real GET /api/events, the connection has a head start
+    instead of that request eating the full reconnect delay itself. Runs
+    off the request thread entirely, so it can never slow down or fail the
+    page load; db.py's own retry/backoff handles the actual reconnect."""
+    try:
+        db.get_lock().acquire()
+        try:
+            db.get_conn().execute("SELECT 1")
+        finally:
+            db.get_lock().release()
+    except Exception:
+        pass
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -96,6 +115,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Location", "/login.html")
             self.end_headers()
             return
+
+        if path == "/":
+            threading.Thread(target=_warm_db, daemon=True).start()
 
         if path == "/api/events":
             status, payload = api.list_events()
