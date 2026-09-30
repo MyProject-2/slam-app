@@ -32,15 +32,23 @@ import workflow
 # var in any environment that isn't just this local demo.
 HRIS_WEBHOOK_SECRET = os.environ.get("HRIS_WEBHOOK_SECRET", "demo-insecure-secret-change-me")
 
+# The company this deployment is demoing for — drives the welcome
+# email/SMS copy and the demo-login email domain check below. Defaults
+# preserve this instance's current JOE & THE JUICE configuration; set
+# both env vars to repoint the whole app at a different company without
+# touching code.
+COMPANY_NAME = os.environ.get("COMPANY_NAME", "JOE & THE JUICE")
+
 # Signs the "demo login" cookie (see demo_login/verify_demo_login_cookie) —
 # a second, much weaker way into the deployed app alongside real Microsoft
-# SSO, offered on /login.html for anyone who can claim a @joejuice.com
-# email. Deliberately not a real identity check: nothing confirms the
-# person submitting the email actually owns it (no verification email
-# sent) — accepted as good enough for a portfolio demo, not a production
-# access control. Set via DEMO_LOGIN_SECRET outside local dev.
+# SSO, offered on /login.html for anyone who can claim an email on
+# DEMO_LOGIN_DOMAIN. Deliberately not a real identity check: nothing
+# confirms the person submitting the email actually owns it (no
+# verification email sent) — accepted as good enough for a portfolio
+# demo, not a production access control. Set via DEMO_LOGIN_SECRET
+# outside local dev.
 DEMO_LOGIN_SECRET = os.environ.get("DEMO_LOGIN_SECRET", "demo-insecure-secret-change-me")
-DEMO_LOGIN_DOMAIN = "joejuice.com"
+DEMO_LOGIN_DOMAIN = os.environ.get("DEMO_LOGIN_DOMAIN", "joejuice.com")
 DEMO_LOGIN_COOKIE_NAME = "slam_demo_login"
 DEMO_LOGIN_TTL_SECONDS = 60 * 60 * 12  # 12 hours
 
@@ -143,7 +151,7 @@ def verify_demo_login_cookie(value: str) -> bool:
 
 def demo_login(body):
     """Backs /login.html's 'Demo login' option. The only check is whether
-    the submitted email ends in @joejuice.com — self-reported, never
+    the submitted email ends in @DEMO_LOGIN_DOMAIN — self-reported, never
     verified (no confirmation email, nothing proves ownership). Issues a
     signed cookie server.py sets on the response; see verify_demo_login_cookie's
     docstring for why this is an accepted, deliberate weak point rather
@@ -598,12 +606,12 @@ def send_welcome_email(to_email: str, full_name: str, upn: str, temp_password: s
                 "note": "No email on file for this employee — skipped."}
 
     msg = MIMEMultipart()
-    msg["Subject"] = "Welcome to JOE & THE JUICE — set up your account"
+    msg["Subject"] = f"Welcome to {COMPANY_NAME} — set up your account"
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg.attach(MIMEText(
         f"Hi {full_name},\n\n"
-        f"Welcome to JOE & THE JUICE! Your account has been created.\n\n"
+        f"Welcome to {COMPANY_NAME}! Your account has been created.\n\n"
         f"Sign in at https://www.office.com using:\n"
         f"  Username: {upn}\n"
         f"  Temporary password: {temp_password}\n\n"
@@ -639,12 +647,12 @@ def send_generic_welcome_email(to_email: str, full_name: str) -> dict:
                 "note": "No personal email on file for this employee — skipped."}
 
     msg = MIMEMultipart()
-    msg["Subject"] = "Welcome to JOE & THE JUICE!"
+    msg["Subject"] = f"Welcome to {COMPANY_NAME}!"
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg.attach(MIMEText(
         f"Hi {full_name},\n\n"
-        f"Welcome to JOE & THE JUICE! We're excited to have you join us — your onboarding is underway.\n\n"
+        f"Welcome to {COMPANY_NAME}! We're excited to have you join us — your onboarding is underway.\n\n"
         f"— SLAM (automated)",
         "plain",
     ))
@@ -872,7 +880,7 @@ def advance_step(event_id):
         elif not contact or not contact["phone"]:
             response["welcome_message"] = {"sent": False, "note": "No phone number on file for this employee — skipped."}
         else:
-            result = send_sms(contact["phone"], f"Welcome to JOE & THE JUICE, {ev['employee_name']}! Your onboarding is underway.")
+            result = send_sms(contact["phone"], f"Welcome to {COMPANY_NAME}, {ev['employee_name']}! Your onboarding is underway.")
             result["channel"] = contact["channel"]
             response["welcome_message"] = result
             print(f"[welcome-message] {result}")

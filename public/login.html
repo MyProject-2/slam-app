@@ -78,17 +78,30 @@
     <div class="divider">or</div>
 
     <div class="field">
-      <label for="demoEmail">Demo login — @joejuice.com email</label>
-      <input type="email" id="demoEmail" placeholder="you@joejuice.com" autocomplete="email">
+      <label for="demoEmail" id="demoLabel">Demo login</label>
+      <input type="email" id="demoEmail" placeholder="you@example.com" autocomplete="email">
     </div>
     <button class="demo-btn" id="demoBtn" onclick="tryDemoLogin()">Continue</button>
     <div class="error" id="demoError"></div>
 
-    <p class="note">Demo login only checks that the address ends in <code>@joejuice.com</code> — it isn't verified. It's a lightweight second door for reviewers, not a real identity check.</p>
+    <p class="note" id="demoNote">Demo login only checks your email's domain — it isn't verified. It's a lightweight second door for reviewers, not a real identity check.</p>
   </div>
 </div>
 
 <script>
+async function loadDemoLoginDomain(){
+  try{
+    const res = await fetch('/api/demo-login-domain');
+    const data = await res.json();
+    const domain = data.domain;
+    document.getElementById('demoLabel').textContent = `Demo login — @${domain} email`;
+    document.getElementById('demoEmail').placeholder = `you@${domain}`;
+    document.getElementById('demoNote').innerHTML =
+      `Demo login only checks that the address ends in <code>@${domain}</code> — it isn't verified. It's a lightweight second door for reviewers, not a real identity check.`;
+  }catch(e){ /* labels keep their generic fallback text */ }
+}
+loadDemoLoginDomain();
+
 async function tryDemoLogin(){
   const email = document.getElementById('demoEmail').value.trim();
   const errorEl = document.getElementById('demoError');

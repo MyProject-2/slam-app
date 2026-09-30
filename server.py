@@ -41,10 +41,12 @@ EMPLOYEE_RE = re.compile(r"^/api/employees/(\d+)$")
 ENFORCE_AUTH = bool(os.environ.get("WEBSITE_SITE_NAME"))
 
 # Reachable without being logged in: the login page itself, the demo-login
-# endpoint it calls, and the two real webhook receivers (BambooHR/HRIS),
-# which authenticate their callers via their own signature checks instead
-# — a real HRIS/BambooHR obviously can't complete a browser SSO flow.
-PUBLIC_PATHS = {"/login.html", "/api/demo-login", "/api/webhooks/hris", "/api/webhooks/bamboohr"}
+# endpoint it calls and the domain it checks against (login.html needs
+# that value before the visitor is authenticated, to show it in the
+# form), and the two real webhook receivers (BambooHR/HRIS), which
+# authenticate their callers via their own signature checks instead —
+# a real HRIS/BambooHR obviously can't complete a browser SSO flow.
+PUBLIC_PATHS = {"/login.html", "/api/demo-login", "/api/demo-login-domain", "/api/webhooks/hris", "/api/webhooks/bamboohr"}
 
 
 def _warm_db():
@@ -133,6 +135,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             self._send_json(200, {"ok": True, "time": api.now_iso()})
+            return
+        if path == "/api/demo-login-domain":
+            self._send_json(200, {"domain": api.DEMO_LOGIN_DOMAIN})
             return
         if path == "/api/employees":
             status, payload = api.list_employees()
