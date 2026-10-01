@@ -16,6 +16,7 @@ import re
 import secrets
 import smtplib
 import string
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -121,6 +122,18 @@ SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 SMTP_FROM = os.environ.get("SMTP_FROM") or SMTP_USERNAME
 
+# Where to send a "someone just signed in" alert (see
+# send_login_notification_email) whenever a visitor authenticates via real
+# Microsoft SSO or the demo-login door. Defaults to SMTP_FROM — i.e.
+# notifies whoever's mailbox the app already sends from — if not set to a
+# different address.
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL") or SMTP_FROM
+
+# How long a Microsoft-SSO visitor goes without a repeat login alert (see
+# server.py's do_GET) — mirrors DEMO_LOGIN_TTL_SECONDS's 12h window.
+SSO_LOGIN_NOTIFY_COOKIE_NAME = "slam_sso_notified"
+SSO_LOGIN_NOTIFY_TTL_SECONDS = 60 * 60 * 12  # 12 hours
+
 
 def _sign_demo_login_cookie(email: str) -> str:
     expiry = int(time.time()) + DEMO_LOGIN_TTL_SECONDS
@@ -159,6 +172,7 @@ def demo_login(body):
     email = ((body or {}).get("email") or "").strip().lower()
     if not email.endswith(f"@{DEMO_LOGIN_DOMAIN}"):
         return 403, {"error": f"Only @{DEMO_LOGIN_DOMAIN} email addresses can use demo login."}
+    threading.Thread(target=send_login_notification_email, args=("demo login", email), daemon=True).start()
     return 200, {"ok": True, "cookie_value": _sign_demo_login_cookie(email), "max_age": DEMO_LOGIN_TTL_SECONDS}
 
 
@@ -664,6 +678,37 @@ def send_generic_welcome_email(to_email: str, full_name: str) -> dict:
         return {"sent": True, "simulated": False, "to": to_email}
     except Exception as e:
         return {"sent": False, "simulated": False, "to": to_email, "error": str(e)}
+
+
+def send_login_notification_email(method: str, identity: str) -> dict:
+    """Alerts NOTIFY_EMAIL whenever someone signs in to the live app, via
+    either real Microsoft SSO or the demo-login door (see DEMO_LOGIN_DOMAIN).
+    Always fired from a background thread (see demo_login and server.py's
+    do_GET) so a slow or failing send can never delay or break the actual
+    login. Falls back to a simulated (logged, not sent) result when SMTP or
+    NOTIFY_EMAIL isn't configured."""
+    if not (SMTP_HOST and SMTP_USERNAME and SMTP_PASSWORD and NOTIFY_EMAIL):
+        return {"sent": False, "simulated": True,
+                "note": "SMTP or NOTIFY_EMAIL not configured — simulated only"}
+
+    msg = MIMEMultipart()
+    msg["Subject"] = f"SLAM login: {identity}"
+    msg["From"] = SMTP_FROM
+    msg["To"] = NOTIFY_EMAIL
+    msg.attach(MIMEText(
+        f"{identity} just signed in to SLAM via {method}.\n\n"
+        f"Time: {now_iso()}\n\n"
+        f"— SLAM (automated)",
+        "plain",
+    ))
+
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, [NOTIFY_EMAIL], msg.as_string())
+        return {"sent": True, "simulated": False}
+    except Exception as e:
+        return {"sent": False, "simulated": False, "error": str(e)}
 
 
 def resolve_contact_channel(conn, employee_id):

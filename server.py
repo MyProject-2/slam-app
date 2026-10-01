@@ -95,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path):
+    def _send_file(self, path, extra_headers=None):
         if not os.path.isfile(path):
             self._send_json(404, {"error": "Not found"})
             return
@@ -105,6 +105,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype or "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (extra_headers or []):
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -118,8 +120,33 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        extra_headers = None
+
         if path == "/":
             threading.Thread(target=_warm_db, daemon=True).start()
+
+            # Alert on a real Microsoft SSO sign-in too (demo-login already
+            # notifies from api.demo_login() itself, at the one moment that
+            # login happens) — but the SSO session header is present on
+            # every request once logged in, not just the first, so without
+            # this cookie check the homepage would re-fire an email on
+            # every single visit instead of once per session.
+            if ENFORCE_AUTH:
+                principal = self.headers.get("X-MS-CLIENT-PRINCIPAL-NAME")
+                if principal:
+                    cookies = http.cookies.SimpleCookie()
+                    cookies.load(self.headers.get("Cookie", ""))
+                    if not cookies.get(api.SSO_LOGIN_NOTIFY_COOKIE_NAME):
+                        threading.Thread(
+                            target=api.send_login_notification_email,
+                            args=("Microsoft sign-in", principal),
+                            daemon=True,
+                        ).start()
+                        extra_headers = [(
+                            "Set-Cookie",
+                            f"{api.SSO_LOGIN_NOTIFY_COOKIE_NAME}=1; Path=/; "
+                            f"Max-Age={api.SSO_LOGIN_NOTIFY_TTL_SECONDS}; HttpOnly; Secure; SameSite=Lax",
+                        )]
 
         if path == "/api/events":
             status, payload = api.list_events()
@@ -163,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
         if os.path.commonpath([full_path, PUBLIC_DIR]) != PUBLIC_DIR:
             self._send_json(403, {"error": "Forbidden"})
             return
-        self._send_file(full_path)
+        self._send_file(full_path, extra_headers)
 
     def do_POST(self):
         parsed = urlparse(self.path)
